@@ -72,6 +72,33 @@ G.Physics = {
     const tangentC = (1.2 + targetAltM / 500000) * (1 + twFactor * 0.3);
     const useManualPitch = pitchRate && pitchRate > 0;
 
+    // Pre-roll base failures with random times
+    const baseFailChecks = [];
+    let scheduledFail = null;
+    {
+      const allParts = [];
+      for (let i = 0; i < stageCount; i++) {
+        allParts.push({ part: stages[i].engine, name: (i + 1) + '段目エンジン基礎故障' });
+        allParts.push({ part: stages[i].tank, name: (i + 1) + '段目タンク基礎故障' });
+      }
+      allParts.push({ part: structure, name: '構造材基礎故障' });
+      allParts.push({ part: fairing, name: 'フェアリング基礎故障' });
+      allParts.push({ part: payload, name: 'ペイロード基礎故障' });
+
+      for (const { part, name } of allParts) {
+        const pBase = G.RARITY[part.rarity].baseFail;
+        const roll = Math.random();
+        const didFail = roll < pBase;
+        baseFailChecks.push({ name, rarity: part.rarity, prob: pBase, roll, failed: didFail });
+        if (didFail) {
+          const ft = Math.random() * 600;
+          if (!scheduledFail || ft < scheduledFail.time) {
+            scheduledFail = { time: ft, reason: name, part: part.category || 'unknown' };
+          }
+        }
+      }
+    }
+
     while (t < maxTime && !failed) {
       const alt = h;
       if (alt > peakAltitude) peakAltitude = alt;
@@ -167,6 +194,15 @@ G.Physics = {
         break;
       }
 
+      // Base failure check (pre-rolled)
+      if (scheduledFail && t >= scheduledFail.time) {
+        failed = true;
+        failReason = scheduledFail.reason;
+        failPart = scheduledFail.part;
+        failTime = t;
+        break;
+      }
+
       const accelG = Math.sqrt(ar * ar + at * at) / P.g0;
       const alpha = v > 0 ? Math.abs(Math.atan2(vr, vt) - pitchRad) : 0;
       const qAlpha = q * alpha;
@@ -243,30 +279,6 @@ G.Physics = {
       }
 
       t += dt;
-    }
-
-    const baseFailChecks = [];
-    if (!failed) {
-      const allParts = [];
-      for (let i = 0; i < stageCount; i++) {
-        allParts.push({ part: stages[i].engine, name: (i + 1) + '段目エンジン基礎故障' });
-        allParts.push({ part: stages[i].tank, name: (i + 1) + '段目タンク基礎故障' });
-      }
-      allParts.push({ part: structure, name: '構造材基礎故障' });
-      allParts.push({ part: fairing, name: 'フェアリング基礎故障' });
-      allParts.push({ part: payload, name: 'ペイロード基礎故障' });
-
-      for (const { part, name } of allParts) {
-        const pBase = G.RARITY[part.rarity].baseFail;
-        const roll = Math.random();
-        baseFailChecks.push({ name, rarity: part.rarity, prob: pBase, roll, failed: roll < pBase });
-        if (roll < pBase) {
-          failed = true;
-          failReason = name;
-          failPart = part.category || 'unknown';
-          failTime = t * Math.random();
-        }
-      }
     }
 
     const peakAltKm = peakAltitude / 1000;

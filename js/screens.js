@@ -177,12 +177,14 @@ G.Screens = {
   },
 
   _partBrief(p) {
+    const failPct = Math.round(G.RARITY[p.rarity].baseFail * 100);
+    const failStr = `<span style="color:#ff6666">故障率${failPct}%</span>`;
     switch (p.category) {
-      case 'engine': return `推力${p.vacuumThrust}kN / Isp${p.isp}s / ${p.dryMass}kg`;
-      case 'tank': return `容量${p.propellantCapacity}kg / ${p.dryMass}kg`;
-      case 'structure': return `${p.dryMass}kg`;
-      case 'fairing': return `Cd${p.dragCoefficient} / ${p.dryMass}kg`;
-      case 'payload': return `${p.mass}kg / x${p.scoreMultiplier}`;
+      case 'engine': return `推力${p.vacuumThrust}kN / Isp${p.isp}s / ${p.dryMass}kg / ${failStr}`;
+      case 'tank': return `容量${p.propellantCapacity}kg / ${p.dryMass}kg / ${failStr}`;
+      case 'structure': return `${p.dryMass}kg / ${failStr}`;
+      case 'fairing': return `Cd${p.dragCoefficient} / ${p.dryMass}kg / ${failStr}`;
+      case 'payload': return `${p.mass}kg / x${p.scoreMultiplier} / ${failStr}`;
       default: return '';
     }
   },
@@ -275,12 +277,14 @@ G.Screens = {
   },
 
   _partDetail(p) {
+    const failPct = Math.round(G.RARITY[p.rarity].baseFail * 100);
+    const failStr = `<span style="color:#ff6666">故障率: ${failPct}%</span>`;
     switch (p.category) {
-      case 'engine': return `真空推力: ${p.vacuumThrust}kN | 海面推力: ${p.seaLevelThrust}kN | Isp: ${p.isp}s | 質量: ${p.dryMass}kg | 流量: ${p.massFlowRate}kg/s`;
-      case 'tank': return `容量: ${p.propellantCapacity}kg | 乾燥質量: ${p.dryMass}kg | 推進剤: ${p.propellantType}`;
-      case 'structure': return `乾燥質量: ${p.dryMass}kg | 接続強度: ${p.connectionStrength}`;
-      case 'fairing': return `Cd: ${p.dragCoefficient} | 面積: ${p.referenceArea}m² | 質量: ${p.dryMass}kg`;
-      case 'payload': return `質量: ${p.mass}kg | スコア倍率: x${p.scoreMultiplier} | 耐加速度: ${p.maxAccel}G`;
+      case 'engine': return `真空推力: ${p.vacuumThrust}kN | 海面推力: ${p.seaLevelThrust}kN | Isp: ${p.isp}s | 質量: ${p.dryMass}kg | 流量: ${p.massFlowRate}kg/s | ${failStr}`;
+      case 'tank': return `容量: ${p.propellantCapacity}kg | 乾燥質量: ${p.dryMass}kg | 推進剤: ${p.propellantType} | ${failStr}`;
+      case 'structure': return `乾燥質量: ${p.dryMass}kg | 接続強度: ${p.connectionStrength} | ${failStr}`;
+      case 'fairing': return `Cd: ${p.dragCoefficient} | 面積: ${p.referenceArea}m² | 質量: ${p.dryMass}kg | ${failStr}`;
+      case 'payload': return `質量: ${p.mass}kg | スコア倍率: x${p.scoreMultiplier} | 耐加速度: ${p.maxAccel}G | ${failStr}`;
       default: return '';
     }
   },

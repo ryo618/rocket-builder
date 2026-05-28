@@ -264,11 +264,6 @@ G.App = {
       const camLerp = Math.min(0.15, 0.06 + speed * 0.005);
       camX += (rw.x - camX) * camLerp;
       camY += (rw.y - camY) * camLerp;
-      if (!userZoom) {
-        const span = Math.max(3000, d.alt * 1.8, Math.abs(d.downrange) * 0.4);
-        targetZoom = H * 0.4 / span;
-        targetZoom = Math.max(H / 30000000, Math.min(H / 400, targetZoom));
-      }
       zoom += (targetZoom - zoom) * 0.06;
 
       // --- Debris update ---
@@ -335,14 +330,6 @@ G.App = {
       // Rocket
       const rp = toScr(rw.x, rw.y);
       const rW2 = 10, rH2 = 26;
-      // Glow indicator (always visible even at extreme zoom-out)
-      ctx.save();
-      const glowR = Math.max(8, 16 / Math.max(0.0001, zoom * 500));
-      const glow = ctx.createRadialGradient(rp.x, rp.y, 0, rp.x, rp.y, glowR);
-      glow.addColorStop(0, d.burning ? 'rgba(255,120,0,0.6)' : 'rgba(200,200,255,0.4)');
-      glow.addColorStop(1, 'rgba(255,120,0,0)');
-      ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(rp.x, rp.y, glowR, 0, Math.PI*2); ctx.fill();
-      ctx.restore();
       ctx.save(); ctx.translate(rp.x, rp.y); ctx.rotate(Math.PI/2 - fpaRad);
       ctx.fillStyle = '#e0e0e0'; ctx.beginPath();
       ctx.moveTo(0,-rH2/2); ctx.lineTo(-rW2/3,-rH2/4); ctx.lineTo(-rW2/3,rH2/3); ctx.lineTo(rW2/3,rH2/3); ctx.lineTo(rW2/3,-rH2/4); ctx.closePath(); ctx.fill();

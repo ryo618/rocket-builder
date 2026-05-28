@@ -2,11 +2,11 @@ var G = window.G || {};
 window.G = G;
 
 G.RARITY = {
-  1: { name: 'Common', color: '#9e9e9e', bg: '#3a3a3a', rate: 0.60, baseFail: 0.15 },
-  2: { name: 'Uncommon', color: '#4caf50', bg: '#1b3a1b', rate: 0.25, baseFail: 0.08 },
-  3: { name: 'Rare', color: '#2196f3', bg: '#0d2a4a', rate: 0.10, baseFail: 0.03 },
-  4: { name: 'Epic', color: '#9c27b0', bg: '#2a0d3a', rate: 0.04, baseFail: 0.01 },
-  5: { name: 'Legendary', color: '#ff9800', bg: '#3a2a0d', rate: 0.01, baseFail: 0.003 },
+  1: { name: 'Common', color: '#9e9e9e', bg: '#3a3a3a', rate: 0.50, baseFail: 0.30 },
+  2: { name: 'Uncommon', color: '#4caf50', bg: '#1b3a1b', rate: 0.35, baseFail: 0.20 },
+  3: { name: 'Rare', color: '#2196f3', bg: '#0d2a4a', rate: 0.10, baseFail: 0.10 },
+  4: { name: 'Epic', color: '#9c27b0', bg: '#2a0d3a', rate: 0.04, baseFail: 0.05 },
+  5: { name: 'Legendary', color: '#ff9800', bg: '#3a2a0d', rate: 0.01, baseFail: 0.01 },
 };
 
 G.STAR = (n) => '★'.repeat(n);
