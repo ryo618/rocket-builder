@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Rocket Builder — ロケット設計ゲーム</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <header class="app-header">
+      <div class="app-title">ROCKET BUILDER</div>
+    </header>
+    <main id="main"></main>
+    <nav class="bottom-nav">
+      <button class="nav-btn" data-screen="home" onclick="G.App.navigate('home')">
+        <span class="nav-icon">🏠</span><span class="nav-label">ホーム</span>
+      </button>
+      <button class="nav-btn" data-screen="garage" onclick="G.App.navigate('garage')">
+        <span class="nav-icon">🔧</span><span class="nav-label">ガレージ</span>
+      </button>
+      <button class="nav-btn" data-screen="launch" onclick="G.App.navigate('launch')">
+        <span class="nav-icon">🚀</span><span class="nav-label">打ち上げ</span>
+      </button>
+      <button class="nav-btn" data-screen="records" onclick="G.App.navigate('records')">
+        <span class="nav-icon">📊</span><span class="nav-label">記録</span>
+      </button>
+      <button class="nav-btn" data-screen="collection" onclick="G.App.navigate('collection')">
+        <span class="nav-icon">📦</span><span class="nav-label">収集</span>
+      </button>
+    </nav>
+  </div>
+  <script src="js/data.js"></script>
+  <script src="js/state.js"></script>
+  <script src="js/gacha.js"></script>
+  <script src="js/physics.js"></script>
+  <script src="js/score.js"></script>
+  <script src="js/screens.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
