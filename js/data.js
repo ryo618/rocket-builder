@@ -11,7 +11,7 @@ G.RARITY = {
 
 G.STAR = (n) => '★'.repeat(n);
 
-G.CATEGORIES = ['engine', 'tank', 'structure', 'fairing', 'payload'];
+G.CATEGORIES = ['engine', 'tank', 'structure', 'fairing', 'payload', 'obc'];
 
 G.PARTS = {
   engine: [
@@ -28,15 +28,15 @@ G.PARTS = {
   ],
   tank: [
     { id: 't1a', name: 'FT-S 標準タンク', rarity: 1, propellantCapacity: 2200, dryMass: 320, propellantType: 'RP-1/LOX', maxQAlpha: 30000, maxAxialAccel: 8 },
-    { id: 't1b', name: 'FT-S 軽量タンク', rarity: 1, propellantCapacity: 1600, dryMass: 240, propellantType: 'RP-1/LOX', maxQAlpha: 25000, maxAxialAccel: 7 },
-    { id: 't2a', name: 'FT-M 中型タンク', rarity: 2, propellantCapacity: 3200, dryMass: 360, propellantType: 'RP-1/LOX', maxQAlpha: 40000, maxAxialAccel: 10 },
-    { id: 't2b', name: 'FT-M コンパクト', rarity: 2, propellantCapacity: 2400, dryMass: 260, propellantType: 'LH2/LOX', maxQAlpha: 35000, maxAxialAccel: 9 },
-    { id: 't3a', name: 'FT-L 大型タンク', rarity: 3, propellantCapacity: 4800, dryMass: 420, propellantType: 'RP-1/LOX', maxQAlpha: 55000, maxAxialAccel: 12 },
-    { id: 't3b', name: 'FT-L 効率タンク', rarity: 3, propellantCapacity: 3800, dryMass: 300, propellantType: 'LH2/LOX', maxQAlpha: 50000, maxAxialAccel: 11 },
-    { id: 't4a', name: 'FT-XL メガタンク', rarity: 4, propellantCapacity: 6500, dryMass: 420, propellantType: 'CH4/LOX', maxQAlpha: 70000, maxAxialAccel: 15 },
-    { id: 't4b', name: 'FT-XL ウルトラライト', rarity: 4, propellantCapacity: 5000, dryMass: 300, propellantType: 'LH2/LOX', maxQAlpha: 65000, maxAxialAccel: 14 },
-    { id: 't5a', name: 'FT-Z アブソリュート', rarity: 5, propellantCapacity: 8500, dryMass: 380, propellantType: 'CH4/LOX', maxQAlpha: 90000, maxAxialAccel: 20 },
-    { id: 't5b', name: 'FT-Z フェザー', rarity: 5, propellantCapacity: 6500, dryMass: 250, propellantType: 'LH2/LOX', maxQAlpha: 85000, maxAxialAccel: 18 },
+    { id: 't1b', name: 'FT-S 軽量タンク', rarity: 1, propellantCapacity: 1600, dryMass: 250, propellantType: 'RP-1/LOX', maxQAlpha: 25000, maxAxialAccel: 7 },
+    { id: 't2a', name: 'FT-M 中型タンク', rarity: 2, propellantCapacity: 3200, dryMass: 290, propellantType: 'RP-1/LOX', maxQAlpha: 40000, maxAxialAccel: 10 },
+    { id: 't2b', name: 'FT-M LH2タンク', rarity: 2, propellantCapacity: 2400, dryMass: 570, propellantType: 'LH2/LOX', maxQAlpha: 35000, maxAxialAccel: 9 },
+    { id: 't3a', name: 'FT-L 大型タンク', rarity: 3, propellantCapacity: 4800, dryMass: 270, propellantType: 'RP-1/LOX', maxQAlpha: 55000, maxAxialAccel: 12 },
+    { id: 't3b', name: 'FT-L LH2効率タンク', rarity: 3, propellantCapacity: 3800, dryMass: 530, propellantType: 'LH2/LOX', maxQAlpha: 50000, maxAxialAccel: 11 },
+    { id: 't4a', name: 'FT-XL メタンタンク', rarity: 4, propellantCapacity: 6500, dryMass: 170, propellantType: 'CH4/LOX', maxQAlpha: 70000, maxAxialAccel: 15 },
+    { id: 't4b', name: 'FT-XL LH2大型タンク', rarity: 4, propellantCapacity: 5000, dryMass: 330, propellantType: 'LH2/LOX', maxQAlpha: 65000, maxAxialAccel: 14 },
+    { id: 't5a', name: 'FT-Z メタン極限タンク', rarity: 5, propellantCapacity: 8500, dryMass: 150, propellantType: 'CH4/LOX', maxQAlpha: 90000, maxAxialAccel: 20 },
+    { id: 't5b', name: 'FT-Z LH2フェザー', rarity: 5, propellantCapacity: 6500, dryMass: 280, propellantType: 'LH2/LOX', maxQAlpha: 85000, maxAxialAccel: 18 },
   ],
   structure: [
     { id: 's1', name: 'IS-1 鉄骨フレーム', rarity: 1, dryMass: 110, connectionStrength: 100, maxQAlpha: 25000, maxAxialAccel: 7 },
@@ -58,6 +58,13 @@ G.PARTS = {
     { id: 'p3', name: 'SAT-3 通信衛星', rarity: 3, mass: 250, scoreMultiplier: 1.5, maxAccel: 13 },
     { id: 'p4', name: 'SAT-4 地球観測衛星', rarity: 4, mass: 400, scoreMultiplier: 2.0, maxAccel: 16 },
     { id: 'p5', name: 'SAT-5 宇宙望遠鏡', rarity: 5, mass: 600, scoreMultiplier: 3.0, maxAccel: 22 },
+  ],
+  obc: [
+    { id: 'obc1', name: 'FC-1 基本制御', rarity: 1, dryMass: 15, guidanceBonus: 0, reliabilityBonus: 0 },
+    { id: 'obc2', name: 'FC-2 航法制御', rarity: 2, dryMass: 12, guidanceBonus: 0.05, reliabilityBonus: 0.03 },
+    { id: 'obc3', name: 'FC-3 統合制御', rarity: 3, dryMass: 10, guidanceBonus: 0.10, reliabilityBonus: 0.05 },
+    { id: 'obc4', name: 'FC-4 AI制御', rarity: 4, dryMass: 7, guidanceBonus: 0.15, reliabilityBonus: 0.08 },
+    { id: 'obc5', name: 'FC-5 量子制御', rarity: 5, dryMass: 4, guidanceBonus: 0.20, reliabilityBonus: 0.12 },
   ],
 };
 
@@ -99,20 +106,21 @@ G.PHYSICS = {
   EARTH_ROTATION: 465.1,
 };
 
-G.DEFAULT_PARTS = ['e1a', 't1a', 'e1b', 't1b', 's1', 'f1', 'p1'];
+G.DEFAULT_PARTS = ['e1a', 't1a', 'e1b', 't1b', 's1', 'f1', 'p1', 'obc1'];
 
 G.DEFAULT_ROCKET = {
   stages: [
     { engine: 'e1a', tank: 't1a' },
     { engine: 'e1b', tank: 't1b' }
   ],
-  structure: 's1',
+  structures: ['s1'],
   fairing: 'f1',
   payload: 'p1',
+  obc: 'obc1',
   stageCount: 2
 };
 
-G.DEFAULT_INVENTORY = ['e1a', 't1a', 'e1b', 't1b', 's1', 'f1', 'p1'];
+G.DEFAULT_INVENTORY = ['e1a', 't1a', 'e1b', 't1b', 's1', 'f1', 'p1', 'obc1'];
 G.MAX_STAGES = 3;
 
 G.GACHA_PITY = 100;

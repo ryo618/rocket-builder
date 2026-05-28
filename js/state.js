@@ -48,14 +48,29 @@ G.State = {
           { engine: old.engine || 'e1a', tank: old.tank || 't1a' },
           { engine: 'e1b', tank: 't1b' }
         ],
-        structure: old.structure || 's1',
+        structures: [old.structure || 's1'],
         fairing: old.fairing || 'f1',
         payload: old.payload || 'p1',
+        obc: 'obc1',
         stageCount: 2
       };
-      ['e1b', 't1b'].forEach(id => {
+      ['e1b', 't1b', 'obc1'].forEach(id => {
         if (!this._data.inventory.includes(id)) this._data.inventory.push(id);
       });
+    }
+
+    // Migrate structure → structures array and add obc
+    if (this._data.rocket && this._data.rocket.structure && !this._data.rocket.structures) {
+      const sc = this._data.rocket.stageCount || 2;
+      this._data.rocket.structures = [];
+      for (let i = 0; i < sc - 1; i++) {
+        this._data.rocket.structures.push(this._data.rocket.structure);
+      }
+      delete this._data.rocket.structure;
+    }
+    if (this._data.rocket && !this._data.rocket.obc) {
+      this._data.rocket.obc = 'obc1';
+      if (!this._data.inventory.includes('obc1')) this._data.inventory.push('obc1');
     }
 
     this._checkDailyLogin();
@@ -133,6 +148,8 @@ G.State = {
   setRocketPart(category, partId, stageIdx) {
     if (stageIdx !== undefined && (category === 'engine' || category === 'tank')) {
       this._data.rocket.stages[stageIdx][category] = partId;
+    } else if (category === 'structure' && stageIdx !== undefined) {
+      this._data.rocket.structures[stageIdx] = partId;
     } else {
       this._data.rocket[category] = partId;
     }
@@ -144,21 +161,31 @@ G.State = {
     while (this._data.rocket.stages.length < c) {
       this._data.rocket.stages.push({ engine: 'e1a', tank: 't1a' });
     }
+    const needStructs = Math.max(0, c - 1);
+    if (!this._data.rocket.structures) this._data.rocket.structures = [];
+    while (this._data.rocket.structures.length < needStructs) {
+      this._data.rocket.structures.push('s1');
+    }
     this._data.rocket.stageCount = c;
     this.save();
   },
 
   getRocketParts() {
     const r = this._data.rocket;
+    const sc = r.stageCount;
+    const structCount = Math.max(0, sc - 1);
+    const structs = (r.structures || ['s1']).slice(0, structCount);
+    while (structs.length < structCount) structs.push('s1');
     return {
-      stages: r.stages.slice(0, r.stageCount).map(s => ({
+      stages: r.stages.slice(0, sc).map(s => ({
         engine: G.getPartById(s.engine),
         tank: G.getPartById(s.tank),
       })),
-      structure: G.getPartById(r.structure),
+      structures: structs.map(id => G.getPartById(id)),
       fairing: G.getPartById(r.fairing),
       payload: G.getPartById(r.payload),
-      stageCount: r.stageCount,
+      obc: G.getPartById(r.obc || 'obc1'),
+      stageCount: sc,
     };
   },
 

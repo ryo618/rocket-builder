@@ -9,9 +9,10 @@ G.Physics = {
     const P = G.PHYSICS;
     const stages = rocketParts.stages;
     const stageCount = rocketParts.stageCount;
-    const structure = rocketParts.structure;
+    const structures = rocketParts.structures || [];
     const fairing = rocketParts.fairing;
     const payload = rocketParts.payload;
+    const obc = rocketParts.obc;
 
     const stageData = stages.map(s => ({
       engine: s.engine,
@@ -25,7 +26,8 @@ G.Physics = {
       burnTime: 0,
     }));
 
-    const fixedMass = structure.dryMass + fairing.dryMass + payload.mass;
+    let fixedMass = fairing.dryMass + payload.mass + (obc ? obc.dryMass : 0);
+    for (const st of structures) fixedMass += st.dryMass;
     let totalMass0 = fixedMass;
     for (const sd of stageData) totalMass0 += sd.dryMass + sd.fuelLeft;
     const totalFuel0 = stageData.reduce((s, sd) => s + sd.fuelLeft, 0);
@@ -76,21 +78,25 @@ G.Physics = {
     const tangentC = (1.2 + targetAltM / 500000) * (1 + twFactor * 0.3);
     const useManualPitch = pitchRate && pitchRate > 0;
 
-    // Pre-roll base failures with random times
+    // Pre-roll base failures with random times (OBC reliability bonus reduces fail prob)
     const baseFailChecks = [];
     let scheduledFail = null;
+    const reliabilityBonus = obc ? (obc.reliabilityBonus || 0) : 0;
     {
       const allParts = [];
       for (let i = 0; i < stageCount; i++) {
         allParts.push({ part: stages[i].engine, name: (i + 1) + '段目エンジン基礎故障' });
         allParts.push({ part: stages[i].tank, name: (i + 1) + '段目タンク基礎故障' });
       }
-      allParts.push({ part: structure, name: '構造材基礎故障' });
+      for (let i = 0; i < structures.length; i++) {
+        const sLabel = structures.length === 1 ? '構造材基礎故障' : `構造材${i+1}基礎故障`;
+        allParts.push({ part: structures[i], name: sLabel });
+      }
       allParts.push({ part: fairing, name: 'フェアリング基礎故障' });
       allParts.push({ part: payload, name: 'ペイロード基礎故障' });
 
       for (const { part, name } of allParts) {
-        const pBase = G.RARITY[part.rarity].baseFail;
+        const pBase = G.RARITY[part.rarity].baseFail * (1 - reliabilityBonus);
         const roll = Math.random();
         const didFail = roll < pBase;
         baseFailChecks.push({ name, rarity: part.rarity, prob: pBase, roll, failed: didFail });
@@ -235,7 +241,7 @@ G.Physics = {
         const checks = [
           { part: 'fairing', limit: fairing.maxDynamicPressure, actual: q, name: 'フェアリング動圧超過' },
           { part: 'tank', limit: sd.tank.maxQAlpha * P.g0, actual: qAlpha * P.g0, name: 'タンクQα超過' },
-          { part: 'structure', limit: structure.maxQAlpha * P.g0, actual: qAlpha * P.g0, name: '構造材Qα超過' },
+          { part: 'structure', limit: (structures.length > 0 ? Math.min(...structures.map(s => s.maxQAlpha)) : 50000) * P.g0, actual: qAlpha * P.g0, name: '構造材Qα超過' },
           { part: 'tank', limit: sd.tank.maxAxialAccel, actual: accelG, name: 'タンク加速度超過' },
           { part: 'engine', limit: sd.engine.maxAccel, actual: accelG, name: 'エンジン加速度超過' },
           { part: 'payload', limit: payload.maxAccel, actual: accelG, name: 'ペイロード加速度超過' },

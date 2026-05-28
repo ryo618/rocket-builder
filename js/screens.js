@@ -93,6 +93,11 @@ G.Screens = {
       stagesHtml += this._renderPartSlot('tank', s.tank, 'タンク', i);
       stagesHtml += this._renderPartSlot('engine', s.engine, 'エンジン', i);
       stagesHtml += `</div>`;
+      if (i > 0 && rocket.structures[i - 1]) {
+        const si = i - 1;
+        const gapLabel = sc === 2 ? '段間構造' : `段間構造 (${si+1}段-${si+2}段)`;
+        stagesHtml += this._renderPartSlot('structure', rocket.structures[si], gapLabel, si);
+      }
     }
 
     return `
@@ -115,7 +120,7 @@ G.Screens = {
         <div class="rocket-builder">
           ${this._renderPartSlot('fairing', rocket.fairing, 'フェアリング')}
           ${this._renderPartSlot('payload', rocket.payload, 'ペイロード')}
-          ${this._renderPartSlot('structure', rocket.structure, '段間構造')}
+          ${rocket.obc ? this._renderPartSlot('obc', rocket.obc, 'OBC') : ''}
           ${stagesHtml}
         </div>
         <div class="rocket-visual">
@@ -129,7 +134,9 @@ G.Screens = {
     const P = G.PHYSICS;
     const Ph = G.Physics;
 
-    let totalDryMass = r.structure.dryMass + r.fairing.dryMass + r.payload.mass;
+    let structMass = 0;
+    for (const st of (r.structures || [])) structMass += st.dryMass;
+    let totalDryMass = structMass + r.fairing.dryMass + r.payload.mass + (r.obc ? r.obc.dryMass : 0);
     let totalWetMass = totalDryMass;
     for (const stage of r.stages) {
       totalDryMass += stage.engine.dryMass + stage.tank.dryMass;
@@ -137,7 +144,7 @@ G.Screens = {
     }
 
     let totalDeltaV = 0;
-    const fixedMass = r.structure.dryMass + r.fairing.dryMass + r.payload.mass;
+    const fixedMass = structMass + r.fairing.dryMass + r.payload.mass + (r.obc ? r.obc.dryMass : 0);
     for (let i = r.stageCount - 1; i >= 0; i--) {
       let upperMass = fixedMass;
       for (let j = i + 1; j < r.stageCount; j++) {
@@ -185,6 +192,7 @@ G.Screens = {
       case 'structure': return `${p.dryMass}kg / ${failStr}`;
       case 'fairing': return `Cd${p.dragCoefficient} / ${p.dryMass}kg / ${failStr}`;
       case 'payload': return `${p.mass}kg / x${p.scoreMultiplier} / ${failStr}`;
+      case 'obc': return `${p.dryMass}kg / 信頼性+${Math.round((p.reliabilityBonus||0)*100)}% / ${failStr}`;
       default: return '';
     }
   },
@@ -221,7 +229,9 @@ G.Screens = {
       const tCol = G.RARITY[s.tank.rarity].color;
       const eCol = G.RARITY[s.engine.rarity].color;
 
-      svg += `<rect x="36" y="${y}" width="28" height="${interH}" fill="#444" stroke="${G.RARITY[r.structure.rarity].color}" stroke-width="1" rx="1"/>`;
+      const structForSvg = (i < sc - 1 && r.structures && r.structures[i]) ? r.structures[i] : null;
+      const connStroke = structForSvg ? G.RARITY[structForSvg.rarity].color : '#666';
+      svg += `<rect x="36" y="${y}" width="28" height="${interH}" fill="#444" stroke="${connStroke}" stroke-width="1" rx="1"/>`;
       y += interH;
 
       const tankH = stageH - 15;
@@ -250,9 +260,19 @@ G.Screens = {
   renderPartSelectModal(category, stageIdx) {
     const parts = G.State.getInventoryParts(category);
     const rocket = G.State.getRocket();
-    const current = (stageIdx !== undefined) ? rocket.stages[stageIdx][category] : rocket[category];
-    const labels = { engine: 'エンジン', tank: 'タンク', structure: '段間構造', fairing: 'フェアリング', payload: 'ペイロード' };
-    const stageLabel = stageIdx !== undefined ? ` (${stageIdx + 1}段目)` : '';
+    let current;
+    if (category === 'structure' && stageIdx !== undefined) {
+      current = (rocket.structures || [])[stageIdx];
+    } else if (stageIdx !== undefined) {
+      current = rocket.stages[stageIdx][category];
+    } else {
+      current = rocket[category];
+    }
+    const labels = { engine: 'エンジン', tank: 'タンク', structure: '段間構造', fairing: 'フェアリング', payload: 'ペイロード', obc: 'OBC' };
+    let stageLabel = '';
+    if (stageIdx !== undefined) {
+      stageLabel = category === 'structure' ? ` (${stageIdx+1}段-${stageIdx+2}段)` : ` (${stageIdx + 1}段目)`;
+    }
     const selectArg = stageIdx !== undefined ? `,'${category}',${stageIdx}` : `,'${category}'`;
 
     return `
@@ -285,6 +305,7 @@ G.Screens = {
       case 'structure': return `乾燥質量: ${p.dryMass}kg | 接続強度: ${p.connectionStrength} | ${failStr}`;
       case 'fairing': return `Cd: ${p.dragCoefficient} | 面積: ${p.referenceArea}m² | 質量: ${p.dryMass}kg | ${failStr}`;
       case 'payload': return `質量: ${p.mass}kg | スコア倍率: x${p.scoreMultiplier} | 耐加速度: ${p.maxAccel}G | ${failStr}`;
+      case 'obc': return `質量: ${p.dryMass}kg | 誘導精度: +${Math.round((p.guidanceBonus||0)*100)}% | 信頼性: +${Math.round((p.reliabilityBonus||0)*100)}% | ${failStr}`;
       default: return '';
     }
   },
@@ -470,7 +491,7 @@ G.Screens = {
           ${G.CATEGORIES.map(c => `
             <button class="col-tab" onclick="G.App.showCollectionTab('${c}')"
               data-cat="${c}">
-              ${{engine:'エンジン',tank:'タンク',structure:'構造',fairing:'フェアリング',payload:'衛星'}[c]}
+              ${{engine:'エンジン',tank:'タンク',structure:'構造',fairing:'フェアリング',payload:'衛星',obc:'OBC'}[c]}
             </button>
           `).join('')}
         </div>
@@ -506,7 +527,7 @@ G.Screens = {
         <div class="gacha-result-card" style="border-color:${rCol};background:${rBg}" onclick="event.stopPropagation()">
           <div class="gacha-rarity" style="color:${rCol}">${G.STAR(p.rarity)} ${G.RARITY[p.rarity].name}</div>
           <div class="gacha-part-name">${p.name}</div>
-          <div class="gacha-category">${{engine:'エンジン',tank:'タンク',structure:'段間構造',fairing:'フェアリング',payload:'ペイロード'}[p.category]}</div>
+          <div class="gacha-category">${{engine:'エンジン',tank:'タンク',structure:'段間構造',fairing:'フェアリング',payload:'ペイロード',obc:'OBC'}[p.category]}</div>
           <div class="gacha-stats">${this._partDetail(p)}</div>
           ${result.isNew ? '<div class="gacha-new">NEW!</div>' : ''}
           ${result.isDupe ? `<div class="gacha-dupe">所持済み → +${result.coins}コイン</div>` : ''}

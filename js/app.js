@@ -163,6 +163,7 @@ G.App = {
     let camX = 0, camY = 30, zoom = H / 500, targetZoom = zoom, userZoom = false;
     const debris = [], trail = [];
     let prevStage = 0, fairingSepDone = false, payloadSepDone = false, statusLock = 0;
+    let explosionParticles = [], explosionStart = 0, explosionCenter = null;
     const statusEl = document.getElementById('launch-status');
     const speedSlider = document.getElementById('speed-slider');
     const speedControl = document.getElementById('speed-control');
@@ -307,18 +308,47 @@ G.App = {
           this.launchAnimFrame = requestAnimationFrame(mainLoop);
           return;
         }
+      } else if (phase === 'explosion') {
+        d = data[data.length - 1];
+        rw = explosionCenter || toWorld(0, 0);
+        fpaRad = (d.fpa || 90) * Math.PI / 180;
+        flameFactor = 0;
+        const elapsedExp = (now - explosionStart) / 1000;
+        for (const ep of explosionParticles) {
+          ep.x += ep.dx * dtR; ep.y += (ep.dy - 50) * dtR; ep.age += dtR;
+        }
+        if (elapsedExp > 3) {
+          cancelAnimationFrame(this.launchAnimFrame);
+          setTimeout(() => this._showResults(simResult, rocketParts, site, targetAlt, targetInc), 500);
+          return;
+        }
       } else {
         // Flight phase
         simTimeCursor += dtR * speed;
-        if (simTimeCursor >= maxSimTime) {
-          cancelAnimationFrame(this.launchAnimFrame);
-          setTimeout(() => this._showResults(simResult, rocketParts, site, targetAlt, targetInc), 1200);
-          return;
-        }
+        if (simTimeCursor > maxSimTime) simTimeCursor = maxSimTime;
         d = interpData(simTimeCursor);
         rw = toWorld(d.downrange, d.alt);
         fpaRad = (d.fpa || 90) * Math.PI / 180;
         flameFactor = 1;
+
+        if (simTimeCursor >= maxSimTime) {
+          const isCrash = !simResult.success && d.alt < 5000;
+          if (isCrash) {
+            phase = 'explosion';
+            explosionStart = now;
+            explosionCenter = { x: rw.x, y: rw.y };
+            for (let ei = 0; ei < 30; ei++) {
+              const ang = Math.random() * Math.PI * 2;
+              const spd = 20 + Math.random() * 80;
+              explosionParticles.push({ x: rw.x, y: rw.y, dx: Math.cos(ang)*spd, dy: Math.sin(ang)*spd, r: 2+Math.random()*5, age: 0, col: ['#ff4400','#ff8800','#ffcc00','#ff6600','#aa2200'][Math.floor(Math.random()*5)] });
+            }
+            setStatus('墜落！', 5000);
+          } else {
+            cancelAnimationFrame(this.launchAnimFrame);
+            setTimeout(() => this._showResults(simResult, rocketParts, site, targetAlt, targetInc), 1200);
+            return;
+          }
+        }
 
         // Trail
         const lt = trail.length ? trail[trail.length-1] : null;
@@ -420,23 +450,46 @@ G.App = {
         ctx.globalAlpha = 1; ctx.restore();
       }
 
-      // Rocket (scaled for pad scene, fixed for flight)
+      // Rocket (hidden during explosion)
       const rp = toScr(rw.x, rw.y);
-      const isPad = (phase === 'pad' || phase === 'ignition');
-      const rScale = isPad ? padScale : 1;
-      const rYOff = isPad ? rH2/3 * rScale : 0; // offset so bottom sits on pad
-      ctx.save(); ctx.translate(rp.x, rp.y - rYOff); ctx.rotate(Math.PI/2 - fpaRad);
-      ctx.scale(rScale, rScale);
-      ctx.fillStyle = '#e0e0e0'; ctx.beginPath();
-      ctx.moveTo(0,-rH2/2); ctx.lineTo(-rW2/3,-rH2/4); ctx.lineTo(-rW2/3,rH2/3); ctx.lineTo(rW2/3,rH2/3); ctx.lineTo(rW2/3,-rH2/4); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = '#aaa'; ctx.beginPath(); ctx.moveTo(0,-rH2/2); ctx.lineTo(-rW2/2.5,-rH2/5); ctx.lineTo(rW2/2.5,-rH2/5); ctx.closePath(); ctx.fill();
-      if (d.burning && flameFactor > 0) {
-        const fl = (14+Math.random()*10) * flameFactor;
-        const fg = ctx.createLinearGradient(0,rH2/3,0,rH2/3+fl);
-        fg.addColorStop(0,'#ffaa00'); fg.addColorStop(0.4,'#ff6600'); fg.addColorStop(0.7,'#ff3300'); fg.addColorStop(1,'rgba(255,80,0,0)');
-        ctx.fillStyle = fg; ctx.beginPath(); ctx.moveTo(-rW2/3.5,rH2/3); ctx.lineTo(rW2/3.5,rH2/3); ctx.lineTo(Math.random()*4-2,rH2/3+fl); ctx.closePath(); ctx.fill();
+      if (phase !== 'explosion') {
+        const isPad = (phase === 'pad' || phase === 'ignition');
+        const rScale = isPad ? padScale : 1;
+        const rYOff = isPad ? rH2/3 * rScale : 0;
+        ctx.save(); ctx.translate(rp.x, rp.y - rYOff); ctx.rotate(Math.PI/2 - fpaRad);
+        ctx.scale(rScale, rScale);
+        ctx.fillStyle = '#e0e0e0'; ctx.beginPath();
+        ctx.moveTo(0,-rH2/2); ctx.lineTo(-rW2/3,-rH2/4); ctx.lineTo(-rW2/3,rH2/3); ctx.lineTo(rW2/3,rH2/3); ctx.lineTo(rW2/3,-rH2/4); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#aaa'; ctx.beginPath(); ctx.moveTo(0,-rH2/2); ctx.lineTo(-rW2/2.5,-rH2/5); ctx.lineTo(rW2/2.5,-rH2/5); ctx.closePath(); ctx.fill();
+        if (d.burning && flameFactor > 0) {
+          const fl = (14+Math.random()*10) * flameFactor;
+          const fg = ctx.createLinearGradient(0,rH2/3,0,rH2/3+fl);
+          fg.addColorStop(0,'#ffaa00'); fg.addColorStop(0.4,'#ff6600'); fg.addColorStop(0.7,'#ff3300'); fg.addColorStop(1,'rgba(255,80,0,0)');
+          ctx.fillStyle = fg; ctx.beginPath(); ctx.moveTo(-rW2/3.5,rH2/3); ctx.lineTo(rW2/3.5,rH2/3); ctx.lineTo(Math.random()*4-2,rH2/3+fl); ctx.closePath(); ctx.fill();
+        }
+        ctx.restore();
       }
-      ctx.restore();
+
+      // Explosion effect
+      if (phase === 'explosion' && explosionCenter) {
+        const elExp = (now - explosionStart) / 1000;
+        const fireR = 30 + elExp * 80;
+        const alp = Math.max(0, 1 - elExp / 2.5);
+        const expGrad = ctx.createRadialGradient(rp.x, rp.y, 0, rp.x, rp.y, fireR);
+        expGrad.addColorStop(0, `rgba(255,255,200,${alp})`);
+        expGrad.addColorStop(0.3, `rgba(255,150,0,${alp*0.8})`);
+        expGrad.addColorStop(0.7, `rgba(255,50,0,${alp*0.4})`);
+        expGrad.addColorStop(1, 'rgba(100,0,0,0)');
+        ctx.fillStyle = expGrad; ctx.beginPath(); ctx.arc(rp.x, rp.y, fireR, 0, Math.PI*2); ctx.fill();
+        for (const ep of explosionParticles) {
+          if (ep.age > 4) continue;
+          const pp = toScr(ep.x, ep.y);
+          const pa = Math.max(0, 1 - ep.age / 3);
+          ctx.globalAlpha = pa; ctx.fillStyle = ep.col;
+          ctx.beginPath(); ctx.arc(pp.x, pp.y, ep.r, 0, Math.PI*2); ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
 
       // Exhaust smoke (ignition phase)
       if (phase === 'ignition' && flameFactor > 0.3) {
