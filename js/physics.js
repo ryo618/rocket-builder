@@ -44,6 +44,10 @@ G.Physics = {
     let mass = totalMass0;
     let t = 0;
     let pitchAngle = 90;
+    // 6DOF rotational state
+    let theta = Math.PI / 2;  // body pitch angle (rad), pi/2 = vertical
+    let omega = 0;             // angular velocity (rad/s)
+    let gimbalAngle = 0;       // TVC gimbal deflection (rad)
     let fairingJettisoned = false;
     let maxQ = 0;
     let maxAccelG = 0;
@@ -77,6 +81,15 @@ G.Physics = {
     const pitchEndAlt = Math.min(targetAltM * 0.7, 250000);
     const tangentC = (1.2 + targetAltM / 500000) * (1 + twFactor * 0.3);
     const useManualPitch = pitchRate && pitchRate > 0;
+
+    // 6DOF rotational dynamics constants
+    const rocketLenBase = 40;
+    const gimbalMaxRad = 5 * Math.PI / 180;
+    const Kp_tvc = 3.0;
+    const Kd_tvc = 1.5;
+    const Cn_alpha6 = 2.0;
+    const staticMarginFrac6 = 0.08;
+    const dampCoeff6 = 0.3;
 
     // Pre-roll base failures with random times (OBC reliability bonus reduces fail prob)
     const baseFailChecks = [];
@@ -165,37 +178,43 @@ G.Physics = {
         }
       }
 
+      // 6DOF guidance: compute desired pitch angle
+      let desiredPitchRad = theta;
       if (useManualPitch) {
-        if (alt > kickoverAlt && pitchAngle > 2) {
-          pitchAngle -= pitchRate * dt;
-          if (pitchAngle < 2) pitchAngle = 2;
+        if (alt > kickoverAlt) {
+          desiredPitchRad = Math.max(2, 90 - pitchRate * t) * Math.PI / 180;
         }
       } else {
         if (!gravityTurnActive && alt > kickoverAlt) {
           gravityTurnActive = true;
         }
         if (gravityTurnActive && relV > 10) {
-          const relFpa = Math.atan2(relVr, relVt) * 180 / Math.PI;
+          const relFpa = Math.atan2(relVr, relVt);
           if (currentStage === 0) {
-            // First stage: linear tangent steering (conservative, pitch only decreases)
             const altFracP = Math.min(0.999, alt / pitchEndAlt);
-            const schedulePitch = Math.atan(tangentC * (1 - altFracP)) * 180 / Math.PI;
-            const maxAoA = alt < 30000 ? 3 : 20;
-            const targetPitch = Math.max(relFpa, Math.min(schedulePitch, relFpa + maxAoA));
-            pitchAngle = Math.min(pitchAngle, Math.max(0, targetPitch));
+            const schedulePitchRad = Math.atan(tangentC * (1 - altFracP));
+            const maxAoARad = (alt < 30000 ? 3 : 20) * Math.PI / 180;
+            const targetPitchRad = Math.max(relFpa, Math.min(schedulePitchRad, relFpa + maxAoARad));
+            desiredPitchRad = Math.min(theta, Math.max(0, targetPitchRad));
           } else {
-            // Upper stage: aggressive horizontal steering for orbit insertion
             const altFrac = Math.min(1, alt / targetAltM);
-            const schedPitch = Math.max(0, 25 * (1 - altFrac * 1.3));
-            const maxAoA = alt > 80000 ? 25 : 10;
-            pitchAngle = Math.max(0, Math.min(schedPitch, relFpa + maxAoA));
+            const schedPitchRad = Math.max(0, 25 * (1 - altFrac * 1.3)) * Math.PI / 180;
+            const maxAoARad = (alt > 80000 ? 25 : 10) * Math.PI / 180;
+            desiredPitchRad = Math.max(0, Math.min(schedPitchRad, relFpa + maxAoARad));
           }
         }
       }
 
-      const pitchRad = pitchAngle * Math.PI / 180;
-      const thrustR = thrustForce * Math.sin(pitchRad) / mass;
-      const thrustT = thrustForce * Math.cos(pitchRad) / mass;
+      // TVC attitude controller (PD)
+      const pitchError = desiredPitchRad - theta;
+      gimbalAngle = Kp_tvc * pitchError - Kd_tvc * omega;
+      gimbalAngle = Math.max(-gimbalMaxRad, Math.min(gimbalMaxRad, gimbalAngle));
+      if (!isBurning) gimbalAngle = 0;
+
+      // 6DOF thrust direction = body axis + gimbal
+      const thrustDir = theta + gimbalAngle;
+      const thrustR = thrustForce * Math.sin(thrustDir) / mass;
+      const thrustT = thrustForce * Math.cos(thrustDir) / mass;
 
       const dragR = relV > 0 ? -dragForce * (relVr / relV) / mass : 0;
       const dragT = relV > 0 ? -dragForce * (relVt / relV) / mass : 0;
@@ -207,6 +226,22 @@ G.Physics = {
       vt += at * dt;
       h += vr * dt;
       downrange += ((vt * P.R_EARTH / r - rotBoost) * dt);
+
+      // 6DOF angular dynamics
+      {
+        const rocketLen = rocketLenBase * Math.pow(mass / totalMass0, 0.3);
+        const MOI = mass * rocketLen * rocketLen / 12;
+        const tvcTorque = thrustForce * Math.sin(gimbalAngle) * rocketLen * 0.4;
+        const alphaAoA6 = v > 10 ? theta - Math.atan2(vr, vt) : 0;
+        const aeroRestoring = -q * fairing.referenceArea * Cn_alpha6 * staticMarginFrac6 * rocketLen * alphaAoA6;
+        const aeroDamping = -dampCoeff6 * q * fairing.referenceArea * rocketLen * rocketLen * omega / (2 * Math.max(v, 1));
+        const omegaDot = (tvcTorque + aeroRestoring + aeroDamping) / MOI;
+        omega += omegaDot * dt;
+        theta += omega * dt;
+        if (theta < 0) { theta = 0; omega = Math.max(0, omega); }
+        if (theta > Math.PI) { theta = Math.PI; omega = Math.min(0, omega); }
+        pitchAngle = theta * 180 / Math.PI;
+      }
 
       if (h < 0 && t > 10) {
         h = 0;
@@ -223,7 +258,7 @@ G.Physics = {
       }
 
       const accelG = Math.sqrt(ar * ar + at * at) / P.g0;
-      const alpha = v > 0 ? Math.abs(Math.atan2(vr, vt) - pitchRad) : 0;
+      const alpha = v > 0 ? Math.abs(theta - Math.atan2(vr, vt)) : 0;
       const qAlpha = q * alpha;
 
       if (q > maxQ) maxQ = q;
@@ -283,6 +318,7 @@ G.Physics = {
           q: Math.round(q),
           accel: Math.round(accelG * 100) / 100,
           pitch: Math.round(pitchAngle * 10) / 10,
+          bodyAngle: Math.round(theta * 180 / Math.PI * 10) / 10,
           fpa: Math.round(fpa * 10) / 10,
           mass: Math.round(mass),
           fuel: Math.round(totalFuel),

@@ -200,6 +200,7 @@ G.App = {
           return { t: lerpV(d0.t,d1.t,f), alt: lerpV(d0.alt,d1.alt,f), vr: lerpV(d0.vr,d1.vr,f),
             vt: lerpV(d0.vt,d1.vt,f), v: lerpV(d0.v,d1.v,f), q: lerpV(d0.q,d1.q,f),
             accel: lerpV(d0.accel,d1.accel,f), fpa: lerpV(d0.fpa,d1.fpa,f),
+            bodyAngle: lerpV(d0.bodyAngle ?? d0.fpa, d1.bodyAngle ?? d1.fpa, f),
             mass: lerpV(d0.mass,d1.mass,f), fuel: lerpV(d0.fuel,d1.fuel,f),
             downrange: lerpV(d0.downrange,d1.downrange,f),
             stage: f<0.5?d0.stage:d1.stage, burning: f<0.5?d0.burning:d1.burning };
@@ -287,18 +288,20 @@ G.App = {
       const speed = (phase === 'flight' && speedSlider) ? parseInt(speedSlider.value) || 1 : 1;
 
       // --- Phase logic: compute d, rw, fpaRad ---
-      let d, rw, fpaRad, flameFactor = 0;
+      let d, rw, fpaRad, bodyRad, flameFactor = 0;
 
       if (phase === 'pad') {
-        d = { t:0, alt:0, vr:0, vt:0, v:0, q:0, accel:0, fpa:90, mass:data[0].mass, fuel:data[0].fuel, downrange:0, stage:0, burning:false };
+        d = { t:0, alt:0, vr:0, vt:0, v:0, q:0, accel:0, fpa:90, bodyAngle:90, mass:data[0].mass, fuel:data[0].fuel, downrange:0, stage:0, burning:false };
         rw = toWorld(0, 0);
         fpaRad = Math.PI / 2;
+        bodyRad = Math.PI / 2;
       } else if (phase === 'ignition') {
         const elapsed = (now - ignitionStart) / 1000;
         flameFactor = Math.min(1, elapsed / 1.0);
-        d = { t:0, alt:0, vr:0, vt:0, v:0, q:0, accel:0, fpa:90, mass:data[0].mass, fuel:data[0].fuel, downrange:0, stage:0, burning:flameFactor>0.3 };
+        d = { t:0, alt:0, vr:0, vt:0, v:0, q:0, accel:0, fpa:90, bodyAngle:90, mass:data[0].mass, fuel:data[0].fuel, downrange:0, stage:0, burning:flameFactor>0.3 };
         rw = toWorld(0, 0);
         fpaRad = Math.PI / 2;
+        bodyRad = Math.PI / 2;
         if (elapsed >= IGNITION_DURATION) {
           phase = 'flight';
           if (!userZoom) targetZoom = H / 3000;
@@ -312,6 +315,7 @@ G.App = {
         d = data[data.length - 1];
         rw = explosionCenter || toWorld(0, 0);
         fpaRad = (d.fpa || 90) * Math.PI / 180;
+        bodyRad = ((d.bodyAngle ?? d.fpa) || 90) * Math.PI / 180;
         flameFactor = 0;
         const elapsedExp = (now - explosionStart) / 1000;
         for (const ep of explosionParticles) {
@@ -329,6 +333,7 @@ G.App = {
         d = interpData(simTimeCursor);
         rw = toWorld(d.downrange, d.alt);
         fpaRad = (d.fpa || 90) * Math.PI / 180;
+        bodyRad = ((d.bodyAngle ?? d.fpa) || 90) * Math.PI / 180;
         flameFactor = 1;
 
         if (simTimeCursor >= maxSimTime) {
@@ -454,18 +459,132 @@ G.App = {
       const rp = toScr(rw.x, rw.y);
       if (phase !== 'explosion') {
         const isPad = (phase === 'pad' || phase === 'ignition');
-        const rScale = isPad ? padScale : 1;
-        const rYOff = isPad ? rH2/3 * rScale : 0;
-        ctx.save(); ctx.translate(rp.x, rp.y - rYOff); ctx.rotate(Math.PI/2 - fpaRad);
+        // Smooth pad→flight transition (3s ease-out) — fixes position jump
+        let rScale, rYOff;
+        if (isPad) {
+          rScale = padScale;
+          rYOff = rH2 / 3 * rScale;
+        } else {
+          const tFrac = Math.min(1, simTimeCursor / 3);
+          const eased = tFrac * (2 - tFrac);
+          rScale = padScale + (1 - padScale) * eased;
+          rYOff = (rH2 / 3 * padScale) * (1 - eased);
+        }
+
+        // Remaining stages and dynamic rocket height
+        const nRem = sc_ - d.stage;
+        const stageFracs = [];
+        let fTot = 0;
+        for (let si = 0; si < sc_; si++) { const w = 1 + (sc_ - 1 - si) * 0.6; stageFracs.push(w); fTot += w; }
+        let remainFrac = 0;
+        for (let si = d.stage; si < sc_; si++) remainFrac += stageFracs[si] / fTot;
+        const drawH = rH2 * (0.30 + 0.70 * remainFrac);
+        const drawW = rW2;
+
+        // Component heights
+        const fairingH = drawH * 0.20;
+        const nozzleH = drawH * 0.07;
+        const interH = nRem > 1 ? drawH * 0.04 : 0;
+        const bodyZone = drawH - fairingH - nozzleH - Math.max(0, nRem - 1) * interH;
+        const stgH = [];
+        let swTot = 0;
+        for (let si = 0; si < nRem; si++) { const w = 1 + (nRem - 1 - si) * 0.6; stgH.push(w); swTot += w; }
+        for (let si = 0; si < nRem; si++) stgH[si] = bodyZone * stgH[si] / swTot;
+
+        ctx.save();
+        ctx.translate(rp.x, rp.y - rYOff);
+        ctx.rotate(Math.PI / 2 - bodyRad);
         ctx.scale(rScale, rScale);
-        ctx.fillStyle = '#e0e0e0'; ctx.beginPath();
-        ctx.moveTo(0,-rH2/2); ctx.lineTo(-rW2/3,-rH2/4); ctx.lineTo(-rW2/3,rH2/3); ctx.lineTo(rW2/3,rH2/3); ctx.lineTo(rW2/3,-rH2/4); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = '#aaa'; ctx.beginPath(); ctx.moveTo(0,-rH2/2); ctx.lineTo(-rW2/2.5,-rH2/5); ctx.lineTo(rW2/2.5,-rH2/5); ctx.closePath(); ctx.fill();
+
+        let yC = -drawH / 2;
+
+        // === Fairing (ogive) ===
+        if (!fairingSepDone) {
+          ctx.fillStyle = '#ccc';
+          ctx.beginPath();
+          ctx.moveTo(0, yC);
+          ctx.bezierCurveTo(-drawW * 0.15, yC + fairingH * 0.25, -drawW * 0.7, yC + fairingH * 0.55, -drawW, yC + fairingH);
+          ctx.lineTo(drawW, yC + fairingH);
+          ctx.bezierCurveTo(drawW * 0.7, yC + fairingH * 0.55, drawW * 0.15, yC + fairingH * 0.25, 0, yC);
+          ctx.fill();
+          // Seam line
+          ctx.strokeStyle = '#999'; ctx.lineWidth = 0.4;
+          ctx.beginPath(); ctx.moveTo(0, yC); ctx.lineTo(0, yC + fairingH); ctx.stroke();
+        } else {
+          // Satellite with solar panels
+          const sy = yC + fairingH * 0.5;
+          ctx.fillStyle = '#e8d44d'; ctx.fillRect(-drawW * 0.35, sy - 2.5, drawW * 0.7, 5);
+          ctx.fillStyle = '#2255cc';
+          ctx.fillRect(-drawW * 1.6, sy - 1.8, drawW * 0.9, 3.6);
+          ctx.fillRect(drawW * 0.7, sy - 1.8, drawW * 0.9, 3.6);
+          ctx.strokeStyle = '#888'; ctx.lineWidth = 0.4;
+          ctx.beginPath();
+          ctx.moveTo(-drawW * 0.35, sy); ctx.lineTo(-drawW * 1.6, sy);
+          ctx.moveTo(drawW * 0.35, sy); ctx.lineTo(drawW * 1.6, sy);
+          ctx.stroke();
+        }
+        yC += fairingH;
+
+        // === Stage bodies (top stage first → bottom stage last) ===
+        for (let si = nRem - 1; si >= 0; si--) {
+          const h = stgH[si];
+          const wMult = 1.0 + (nRem - 1 - si) * 0.02;
+          const sw = drawW * wMult;
+          // Metallic gradient
+          const baseC = si === nRem - 1 ? 210 : 195;
+          const bg = ctx.createLinearGradient(-sw, 0, sw, 0);
+          bg.addColorStop(0, `rgb(${baseC-35},${baseC-35},${baseC-35})`);
+          bg.addColorStop(0.3, `rgb(${baseC},${baseC},${baseC})`);
+          bg.addColorStop(0.5, `rgb(${baseC+15},${baseC+15},${baseC+15})`);
+          bg.addColorStop(0.7, `rgb(${baseC},${baseC},${baseC})`);
+          bg.addColorStop(1, `rgb(${baseC-35},${baseC-35},${baseC-35})`);
+          ctx.fillStyle = bg;
+          ctx.fillRect(-sw, yC, sw * 2, h);
+          ctx.strokeStyle = '#777'; ctx.lineWidth = 0.4;
+          ctx.strokeRect(-sw, yC, sw * 2, h);
+          yC += h;
+          // Interstage joint
+          if (si > 0) {
+            const jw = drawW * 1.06;
+            ctx.fillStyle = '#666'; ctx.fillRect(-jw, yC, jw * 2, interH);
+            ctx.strokeStyle = '#555'; ctx.lineWidth = 0.4;
+            ctx.strokeRect(-jw, yC, jw * 2, interH);
+            yC += interH;
+          }
+        }
+
+        // === Engine nozzle ===
+        const ntW = drawW * 0.45, nbW = drawW * 0.65;
+        ctx.fillStyle = '#555';
+        ctx.beginPath();
+        ctx.moveTo(-ntW, yC); ctx.lineTo(-nbW, yC + nozzleH);
+        ctx.lineTo(nbW, yC + nozzleH); ctx.lineTo(ntW, yC);
+        ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = '#444'; ctx.lineWidth = 0.4;
+        ctx.beginPath(); ctx.moveTo(-ntW, yC); ctx.lineTo(-nbW, yC + nozzleH);
+        ctx.moveTo(ntW, yC); ctx.lineTo(nbW, yC + nozzleH); ctx.stroke();
+        yC += nozzleH;
+
+        // === Exhaust flame ===
         if (d.burning && flameFactor > 0) {
-          const fl = (14+Math.random()*10) * flameFactor;
-          const fg = ctx.createLinearGradient(0,rH2/3,0,rH2/3+fl);
-          fg.addColorStop(0,'#ffaa00'); fg.addColorStop(0.4,'#ff6600'); fg.addColorStop(0.7,'#ff3300'); fg.addColorStop(1,'rgba(255,80,0,0)');
-          ctx.fillStyle = fg; ctx.beginPath(); ctx.moveTo(-rW2/3.5,rH2/3); ctx.lineTo(rW2/3.5,rH2/3); ctx.lineTo(Math.random()*4-2,rH2/3+fl); ctx.closePath(); ctx.fill();
+          const fl = (14 + Math.random() * 10) * flameFactor;
+          const fg = ctx.createLinearGradient(0, yC - 2, 0, yC + fl);
+          fg.addColorStop(0, '#ffcc00'); fg.addColorStop(0.2, '#ffaa00');
+          fg.addColorStop(0.5, '#ff6600'); fg.addColorStop(0.8, '#ff3300');
+          fg.addColorStop(1, 'rgba(255,80,0,0)');
+          ctx.fillStyle = fg;
+          ctx.beginPath();
+          ctx.moveTo(-nbW * 0.85, yC - 1); ctx.lineTo(nbW * 0.85, yC - 1);
+          ctx.lineTo(Math.random() * 4 - 2, yC + fl);
+          ctx.closePath(); ctx.fill();
+          // Bright core
+          const cW = nbW * 0.35, cL = fl * 0.55;
+          const cg = ctx.createLinearGradient(0, yC, 0, yC + cL);
+          cg.addColorStop(0, 'rgba(255,255,255,0.7)'); cg.addColorStop(0.5, 'rgba(255,255,200,0.3)');
+          cg.addColorStop(1, 'rgba(255,200,100,0)');
+          ctx.fillStyle = cg;
+          ctx.beginPath(); ctx.moveTo(-cW, yC); ctx.lineTo(cW, yC);
+          ctx.lineTo(0, yC + cL); ctx.closePath(); ctx.fill();
         }
         ctx.restore();
       }
