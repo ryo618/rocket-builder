@@ -170,11 +170,20 @@ G.Physics = {
         }
         if (gravityTurnActive && relV > 10) {
           const relFpa = Math.atan2(relVr, relVt) * 180 / Math.PI;
-          const altFracP = Math.min(0.999, alt / pitchEndAlt);
-          const schedulePitch = Math.atan(tangentC * (1 - altFracP)) * 180 / Math.PI;
-          const maxAoA = alt < 30000 ? 3 : 20;
-          const targetPitch = Math.max(relFpa, Math.min(schedulePitch, relFpa + maxAoA));
-          pitchAngle = Math.min(pitchAngle, Math.max(0, targetPitch));
+          if (currentStage === 0) {
+            // First stage: linear tangent steering (conservative, pitch only decreases)
+            const altFracP = Math.min(0.999, alt / pitchEndAlt);
+            const schedulePitch = Math.atan(tangentC * (1 - altFracP)) * 180 / Math.PI;
+            const maxAoA = alt < 30000 ? 3 : 20;
+            const targetPitch = Math.max(relFpa, Math.min(schedulePitch, relFpa + maxAoA));
+            pitchAngle = Math.min(pitchAngle, Math.max(0, targetPitch));
+          } else {
+            // Upper stage: aggressive horizontal steering for orbit insertion
+            const altFrac = Math.min(1, alt / targetAltM);
+            const schedPitch = Math.max(0, 25 * (1 - altFrac * 1.3));
+            const maxAoA = alt > 80000 ? 25 : 10;
+            pitchAngle = Math.max(0, Math.min(schedPitch, relFpa + maxAoA));
+          }
         }
       }
 

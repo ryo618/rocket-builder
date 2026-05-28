@@ -150,18 +150,26 @@ G.App = {
     canvas.height = rect.height;
     const W = canvas.width, H = canvas.height;
     const P = G.PHYSICS, R = P.R_EARTH, MU = P.MU;
+    const rW2 = 10, rH2 = 26;
 
     const data = simResult.flightData;
     if (!data.length) { this._showResults(simResult, rocketParts, site, targetAlt, targetInc); return; }
 
     const maxSimTime = data[data.length - 1].t;
     let lastFrameTime = null, simTimeCursor = 0;
-    let camX = 0, camY = 0, zoom = H / 3000, targetZoom = zoom, userZoom = false;
+    let camX = 0, camY = 30, zoom = H / 500, targetZoom = zoom, userZoom = false;
     const debris = [], trail = [];
     let prevStage = 0, fairingSepDone = false, payloadSepDone = false, statusLock = 0;
     const statusEl = document.getElementById('launch-status');
     const speedSlider = document.getElementById('speed-slider');
+    const speedControl = document.getElementById('speed-control');
+    const liftoffBtn = document.getElementById('liftoff-btn');
     const stars = Array.from({ length: 200 }, () => ({ x: Math.random(), y: Math.random(), s: Math.random() * 2 + 0.5 }));
+
+    let phase = 'pad';
+    let ignitionStart = 0;
+    const IGNITION_DURATION = 2.5;
+    if (speedControl) speedControl.style.display = 'none';
 
     const toWorld = (dr, alt) => {
       const th = dr / R, r = R + alt;
@@ -172,12 +180,12 @@ G.App = {
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       targetZoom *= e.deltaY > 0 ? 0.82 : 1.22;
-      targetZoom = Math.max(H / 30000000, Math.min(H / 400, targetZoom));
+      targetZoom = Math.max(H / 30000000, Math.min(H / 200, targetZoom));
       userZoom = true;
     }, { passive: false });
     let pinchDist = 0;
     canvas.addEventListener('touchstart', (e) => { if (e.touches.length === 2) { const dx = e.touches[0].clientX - e.touches[1].clientX, dy = e.touches[0].clientY - e.touches[1].clientY; pinchDist = Math.sqrt(dx*dx+dy*dy); }});
-    canvas.addEventListener('touchmove', (e) => { if (e.touches.length === 2) { e.preventDefault(); const dx = e.touches[0].clientX - e.touches[1].clientX, dy = e.touches[0].clientY - e.touches[1].clientY, d2 = Math.sqrt(dx*dx+dy*dy); if (pinchDist > 0) { targetZoom *= d2/pinchDist; targetZoom = Math.max(H/30000000, Math.min(H/400, targetZoom)); userZoom = true; } pinchDist = d2; }}, { passive: false });
+    canvas.addEventListener('touchmove', (e) => { if (e.touches.length === 2) { e.preventDefault(); const dx = e.touches[0].clientX - e.touches[1].clientX, dy = e.touches[0].clientY - e.touches[1].clientY, d2 = Math.sqrt(dx*dx+dy*dy); if (pinchDist > 0) { targetZoom *= d2/pinchDist; targetZoom = Math.max(H/30000000, Math.min(H/200, targetZoom)); userZoom = true; } pinchDist = d2; }}, { passive: false });
 
     const lerpV = (a, b, f) => a + (b - a) * f;
     const interpData = (st) => {
@@ -219,45 +227,121 @@ G.App = {
       statusLock = lockMs || 0;
     };
 
-    const animate = (now) => {
+    // Draw launch pad structures at screen position
+    const drawPadStructures = (sx, sy, sc, showArm) => {
+      if (sc < 0.03) return;
+      // Concrete pad
+      ctx.fillStyle = '#444'; ctx.fillRect(sx-45*sc, sy, 90*sc, 6*sc);
+      ctx.fillStyle = '#555'; ctx.fillRect(sx-38*sc, sy-5*sc, 76*sc, 6*sc);
+      // Flame trench
+      ctx.fillStyle = '#333'; ctx.fillRect(sx-12*sc, sy+6*sc, 24*sc, 10*sc);
+      // Tower
+      const tx = sx+28*sc, tw = 7*sc, th = 85*sc;
+      ctx.fillStyle = '#555'; ctx.fillRect(tx, sy-th, tw, th+6*sc);
+      // Trusses
+      if (sc > 0.2) {
+        ctx.strokeStyle = '#666'; ctx.lineWidth = Math.max(0.5, sc*0.7);
+        for (let i = 0; i < 7; i++) {
+          const y1=sy-th+i*th/7, y2=sy-th+(i+1)*th/7;
+          ctx.beginPath(); ctx.moveTo(tx,y1); ctx.lineTo(tx+tw,y2); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(tx+tw,y1); ctx.lineTo(tx,y2); ctx.stroke();
+        }
+      }
+      // Tower top
+      ctx.fillStyle = '#666'; ctx.fillRect(tx-3*sc, sy-th-5*sc, tw+6*sc, 7*sc);
+      // Lightning rod
+      if (sc > 0.3) {
+        ctx.strokeStyle = '#888'; ctx.lineWidth = Math.max(0.5, sc*0.4);
+        ctx.beginPath(); ctx.moveTo(tx+tw/2, sy-th-5*sc); ctx.lineTo(tx+tw/2, sy-th-22*sc); ctx.stroke();
+      }
+      // Service arm + umbilical (only pre-launch)
+      if (showArm && sc > 0.2) {
+        const armY = sy-18*sc;
+        ctx.fillStyle = '#777'; ctx.fillRect(sx+4*sc, armY, (tx-sx-2*sc), 3*sc);
+        ctx.strokeStyle = '#aa7733'; ctx.lineWidth = Math.max(0.5, sc);
+        ctx.beginPath(); ctx.moveTo(sx+3*sc, armY+3*sc);
+        ctx.quadraticCurveTo(sx+14*sc, armY+12*sc, tx, armY+8*sc); ctx.stroke();
+      }
+    };
+
+    // Liftoff button
+    if (liftoffBtn) {
+      liftoffBtn.onclick = () => {
+        liftoffBtn.style.display = 'none';
+        phase = 'ignition';
+        ignitionStart = performance.now();
+        lastFrameTime = null;
+        setStatus('メインエンジン点火！', 3000);
+      };
+    }
+
+    // === Unified animation loop ===
+    const mainLoop = (now) => {
       if (!lastFrameTime) lastFrameTime = now;
-      const speed = speedSlider ? parseInt(speedSlider.value) || 1 : 1;
-      const dtR = (now - lastFrameTime) / 1000;
+      const dtR = Math.min(0.1, (now - lastFrameTime) / 1000);
       lastFrameTime = now;
-      simTimeCursor += dtR * speed;
-      if (simTimeCursor >= maxSimTime) {
-        cancelAnimationFrame(this.launchAnimFrame);
-        setTimeout(() => this._showResults(simResult, rocketParts, site, targetAlt, targetInc), 1200);
-        return;
-      }
-      const d = interpData(simTimeCursor);
-      const rw = toWorld(d.downrange, d.alt);
-      const fpaRad = (d.fpa || 90) * Math.PI / 180;
+      const speed = (phase === 'flight' && speedSlider) ? parseInt(speedSlider.value) || 1 : 1;
 
-      // Trail (add point if moved enough)
-      const lt = trail.length ? trail[trail.length-1] : null;
-      if (!lt || Math.abs(rw.x-lt.x)+Math.abs(rw.y-lt.y) > 10) trail.push({ x: rw.x, y: rw.y });
+      // --- Phase logic: compute d, rw, fpaRad ---
+      let d, rw, fpaRad, flameFactor = 0;
 
-      // --- Separation events ---
-      if (d.stage !== prevStage) {
-        const perpX = -Math.sin(fpaRad), perpY = Math.cos(fpaRad);
-        debris.push({ type:'stage', x:rw.x, y:rw.y, dx: -perpY*15, dy: perpX*15, a: Math.PI/2-fpaRad, av:0.3, age:0, sz:14 });
-        setStatus((prevStage+1)+'/'+(d.stage+1)+'段 分離', 2000);
-        setTimeout(() => setStatus((d.stage+1)+'段目 点火！', 1500), Math.max(100, 800/speed));
-        prevStage = d.stage;
-      }
-      if (!fairingSepDone && d.alt > 80000) {
-        fairingSepDone = true;
-        const perpX = -Math.sin(fpaRad), perpY = Math.cos(fpaRad);
-        debris.push({ type:'fairing', x:rw.x, y:rw.y, dx: perpX*20+perpY*5, dy: perpY*20-perpX*5, a:0, av:0.8, age:0, sz:7 });
-        debris.push({ type:'fairing', x:rw.x, y:rw.y, dx:-perpX*20+perpY*5, dy:-perpY*20-perpX*5, a:0, av:-0.8, age:0, sz:7 });
-        setStatus('フェアリング分離', 2000);
-      }
-      if (!payloadSepDone && simResult.success && simTimeCursor >= maxSimTime - 6) {
-        payloadSepDone = true;
-        const fwdX = Math.cos(fpaRad), fwdY = Math.sin(fpaRad);
-        debris.push({ type:'payload', x:rw.x+fwdX*30, y:rw.y+fwdY*30, dx:fwdX*3, dy:fwdY*3, a:0, av:0.02, age:0, sz:6 });
-        setStatus('衛星分離！', 3000);
+      if (phase === 'pad') {
+        d = { t:0, alt:0, vr:0, vt:0, v:0, q:0, accel:0, fpa:90, mass:data[0].mass, fuel:data[0].fuel, downrange:0, stage:0, burning:false };
+        rw = toWorld(0, 0);
+        fpaRad = Math.PI / 2;
+      } else if (phase === 'ignition') {
+        const elapsed = (now - ignitionStart) / 1000;
+        flameFactor = Math.min(1, elapsed / 1.0);
+        d = { t:0, alt:0, vr:0, vt:0, v:0, q:0, accel:0, fpa:90, mass:data[0].mass, fuel:data[0].fuel, downrange:0, stage:0, burning:flameFactor>0.3 };
+        rw = toWorld(0, 0);
+        fpaRad = Math.PI / 2;
+        if (elapsed >= IGNITION_DURATION) {
+          phase = 'flight';
+          if (!userZoom) targetZoom = H / 3000;
+          if (speedControl) speedControl.style.display = '';
+          setStatus('リフトオフ！', 2500);
+          lastFrameTime = null;
+          this.launchAnimFrame = requestAnimationFrame(mainLoop);
+          return;
+        }
+      } else {
+        // Flight phase
+        simTimeCursor += dtR * speed;
+        if (simTimeCursor >= maxSimTime) {
+          cancelAnimationFrame(this.launchAnimFrame);
+          setTimeout(() => this._showResults(simResult, rocketParts, site, targetAlt, targetInc), 1200);
+          return;
+        }
+        d = interpData(simTimeCursor);
+        rw = toWorld(d.downrange, d.alt);
+        fpaRad = (d.fpa || 90) * Math.PI / 180;
+        flameFactor = 1;
+
+        // Trail
+        const lt = trail.length ? trail[trail.length-1] : null;
+        if (!lt || Math.abs(rw.x-lt.x)+Math.abs(rw.y-lt.y) > 10) trail.push({ x: rw.x, y: rw.y });
+
+        // Separation events
+        if (d.stage !== prevStage) {
+          const perpX = -Math.sin(fpaRad), perpY = Math.cos(fpaRad);
+          debris.push({ type:'stage', x:rw.x, y:rw.y, dx:-perpY*15, dy:perpX*15, a:Math.PI/2-fpaRad, av:0.3, age:0, sz:14 });
+          setStatus((prevStage+1)+'/'+(d.stage+1)+'段 分離', 2000);
+          setTimeout(() => setStatus((d.stage+1)+'段目 点火！', 1500), Math.max(100,800/speed));
+          prevStage = d.stage;
+        }
+        if (!fairingSepDone && d.alt > 80000) {
+          fairingSepDone = true;
+          const perpX = -Math.sin(fpaRad), perpY = Math.cos(fpaRad);
+          debris.push({ type:'fairing', x:rw.x, y:rw.y, dx:perpX*20+perpY*5, dy:perpY*20-perpX*5, a:0, av:0.8, age:0, sz:7 });
+          debris.push({ type:'fairing', x:rw.x, y:rw.y, dx:-perpX*20+perpY*5, dy:-perpY*20-perpX*5, a:0, av:-0.8, age:0, sz:7 });
+          setStatus('フェアリング分離', 2000);
+        }
+        if (!payloadSepDone && simResult.success && simTimeCursor >= maxSimTime - 6) {
+          payloadSepDone = true;
+          const fwdX = Math.cos(fpaRad), fwdY = Math.sin(fpaRad);
+          debris.push({ type:'payload', x:rw.x+fwdX*30, y:rw.y+fwdY*30, dx:fwdX*3, dy:fwdY*3, a:0, av:0.02, age:0, sz:6 });
+          setStatus('衛星分離！', 3000);
+        }
       }
 
       // --- Camera ---
@@ -268,10 +352,8 @@ G.App = {
 
       // --- Debris update ---
       for (const db of debris) {
-        db.x += db.dx * dtR * speed;
-        db.y += db.dy * dtR * speed;
-        db.a += db.av * dtR * speed;
-        db.age += dtR * speed;
+        db.x += db.dx * dtR * speed; db.y += db.dy * dtR * speed;
+        db.a += db.av * dtR * speed; db.age += dtR * speed;
       }
       if (statusLock > 0) statusLock -= dtR * speed * 1000;
 
@@ -283,13 +365,13 @@ G.App = {
       for (const s of stars) { ctx.globalAlpha = (0.2+skyDk*0.8)*(0.5+Math.random()*0.5); ctx.fillRect(s.x*W, s.y*H, s.s, s.s); }
       ctx.globalAlpha = 1;
 
-      // Orbit prediction
-      if (d.alt > 50000 && d.v > 2000) {
+      // Orbit prediction (flight only)
+      if (phase === 'flight' && d.alt > 50000 && d.v > 2000) {
         const orb = computeOrbit(d.alt, d.downrange, d.vr, d.vt);
         if (orb && orb.pts.length > 2) {
           ctx.strokeStyle = orb.peri > 0 ? 'rgba(0,255,120,0.5)' : 'rgba(255,80,80,0.5)';
           ctx.lineWidth = 2; ctx.setLineDash([8,5]); ctx.beginPath();
-          for (let i = 0; i < orb.pts.length; i++) { const sp = toScr(orb.pts[i].x, orb.pts[i].y); i===0 ? ctx.moveTo(sp.x, sp.y) : ctx.lineTo(sp.x, sp.y); }
+          for (let i = 0; i < orb.pts.length; i++) { const sp = toScr(orb.pts[i].x, orb.pts[i].y); i===0?ctx.moveTo(sp.x,sp.y):ctx.lineTo(sp.x,sp.y); }
           ctx.stroke(); ctx.setLineDash([]);
         }
       }
@@ -297,10 +379,9 @@ G.App = {
       // Earth
       const ecS = toScr(0, -R);
       const eRP = R * zoom;
-      const earthGrad = ctx.createRadialGradient(ecS.x, ecS.y - eRP * 0.3, eRP * 0.1, ecS.x, ecS.y, eRP);
+      const earthGrad = ctx.createRadialGradient(ecS.x, ecS.y - eRP*0.3, eRP*0.1, ecS.x, ecS.y, eRP);
       earthGrad.addColorStop(0, '#1a4a2a'); earthGrad.addColorStop(0.7, '#0f3518'); earthGrad.addColorStop(1, '#0a2510');
       ctx.fillStyle = earthGrad; ctx.beginPath(); ctx.arc(ecS.x, ecS.y, eRP, 0, Math.PI*2); ctx.fill();
-      // Atmosphere glow
       const atmoP = 100000 * zoom;
       if (atmoP > 1) {
         const ag = ctx.createRadialGradient(ecS.x, ecS.y, eRP, ecS.x, ecS.y, eRP+atmoP);
@@ -308,6 +389,13 @@ G.App = {
         ctx.fillStyle = ag; ctx.beginPath(); ctx.arc(ecS.x, ecS.y, eRP+atmoP, 0, Math.PI*2); ctx.fill();
       }
       ctx.strokeStyle = '#4db8ff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(ecS.x, ecS.y, eRP, 0, Math.PI*2); ctx.stroke();
+
+      // Launch pad structures (at world 0,0)
+      const padScr = toScr(0, 0);
+      const padScale = Math.min(1.2, zoom * 60);
+      if (padScr.y > -100 && padScr.y < H+100) {
+        drawPadStructures(padScr.x, padScr.y, padScale, phase === 'pad');
+      }
 
       // Trail
       if (trail.length > 1) {
@@ -319,7 +407,7 @@ G.App = {
       // Debris
       for (const db of debris) {
         if (db.age > 20) continue;
-        const dp = toScr(db.x, db.y); const al = Math.max(0, 1 - db.age / 12);
+        const dp = toScr(db.x, db.y); const al = Math.max(0, 1 - db.age/12);
         ctx.save(); ctx.translate(dp.x, dp.y); ctx.rotate(db.a); ctx.globalAlpha = al;
         if (db.type === 'stage') { ctx.fillStyle='#888'; ctx.fillRect(-3,-db.sz/2,6,db.sz); }
         else if (db.type === 'fairing') { ctx.fillStyle='#aaa'; ctx.beginPath(); ctx.arc(0,0,db.sz/2,0,Math.PI); ctx.fill(); }
@@ -329,41 +417,52 @@ G.App = {
 
       // Rocket
       const rp = toScr(rw.x, rw.y);
-      const rW2 = 10, rH2 = 26;
       ctx.save(); ctx.translate(rp.x, rp.y); ctx.rotate(Math.PI/2 - fpaRad);
       ctx.fillStyle = '#e0e0e0'; ctx.beginPath();
       ctx.moveTo(0,-rH2/2); ctx.lineTo(-rW2/3,-rH2/4); ctx.lineTo(-rW2/3,rH2/3); ctx.lineTo(rW2/3,rH2/3); ctx.lineTo(rW2/3,-rH2/4); ctx.closePath(); ctx.fill();
       ctx.fillStyle = '#aaa'; ctx.beginPath(); ctx.moveTo(0,-rH2/2); ctx.lineTo(-rW2/2.5,-rH2/5); ctx.lineTo(rW2/2.5,-rH2/5); ctx.closePath(); ctx.fill();
-      if (d.burning) {
-        const fl = 14+Math.random()*10;
+      if (d.burning && flameFactor > 0) {
+        const fl = (14+Math.random()*10) * flameFactor;
         const fg = ctx.createLinearGradient(0,rH2/3,0,rH2/3+fl);
         fg.addColorStop(0,'#ffaa00'); fg.addColorStop(0.4,'#ff6600'); fg.addColorStop(0.7,'#ff3300'); fg.addColorStop(1,'rgba(255,80,0,0)');
         ctx.fillStyle = fg; ctx.beginPath(); ctx.moveTo(-rW2/3.5,rH2/3); ctx.lineTo(rW2/3.5,rH2/3); ctx.lineTo(Math.random()*4-2,rH2/3+fl); ctx.closePath(); ctx.fill();
       }
       ctx.restore();
 
-      // Telemetry
-      const el = (id) => document.getElementById(id);
-      const s = (id,v) => { const e2 = el(id); if(e2) e2.textContent = v; };
-      s('tl-time', Math.round(d.t)+'s'); s('tl-alt', (d.alt/1000).toFixed(1)+' km');
-      s('tl-dr', (d.downrange/1000).toFixed(1)+' km'); s('tl-vel', Math.round(d.v).toLocaleString()+' m/s');
-      s('tl-q', Math.round(d.q).toLocaleString()+' Pa'); s('tl-acc', (Math.round(d.accel*100)/100)+' G');
-      s('tl-pitch', (Math.round(d.fpa*10)/10)+'°'); s('tl-stage', (d.stage+1)+'/'+simResult.stageCount);
-      const fuel0 = data[0].fuel;
-      s('tl-fuel', fuel0>0 ? Math.round((d.fuel/fuel0)*100)+'%' : '0%');
+      // Exhaust smoke (ignition phase)
+      if (phase === 'ignition' && flameFactor > 0.3) {
+        for (let i = 0; i < 4; i++) {
+          const smX = padScr.x + (Math.random()-0.5)*50*padScale;
+          const smY = padScr.y + Math.random()*15*padScale;
+          const smR = (4+Math.random()*8) * flameFactor * padScale;
+          ctx.fillStyle = `rgba(200,200,200,${0.08+Math.random()*0.1})`;
+          ctx.beginPath(); ctx.arc(smX, smY, smR, 0, Math.PI*2); ctx.fill();
+        }
+      }
 
-      // Status (only if not locked by event)
-      if (statusLock <= 0) {
+      // Telemetry
+      const el2 = (id) => document.getElementById(id);
+      const sv = (id,v) => { const e = el2(id); if(e) e.textContent = v; };
+      sv('tl-time', Math.round(d.t)+'s'); sv('tl-alt', (d.alt/1000).toFixed(1)+' km');
+      sv('tl-dr', (d.downrange/1000).toFixed(1)+' km'); sv('tl-vel', Math.round(d.v).toLocaleString()+' m/s');
+      sv('tl-q', Math.round(d.q).toLocaleString()+' Pa'); sv('tl-acc', (Math.round(d.accel*100)/100)+' G');
+      sv('tl-pitch', (Math.round(d.fpa*10)/10)+'°'); sv('tl-stage', (d.stage+1)+'/'+simResult.stageCount);
+      const fuel0 = data[0].fuel;
+      sv('tl-fuel', fuel0>0 ? Math.round((d.fuel/fuel0)*100)+'%' : '0%');
+
+      // Status (flight only, not locked)
+      if (phase === 'flight' && statusLock <= 0) {
         if (d.alt > 100000) setStatus('大気圏離脱');
         else if (d.alt > 50000) setStatus('上層大気通過中');
         else if (d.alt > 10000) setStatus('Max-Q通過');
         else if (d.t > 2) setStatus('上昇中');
       }
 
-      this.launchAnimFrame = requestAnimationFrame(animate);
+      this.launchAnimFrame = requestAnimationFrame(mainLoop);
     };
 
-    setTimeout(() => { setStatus('リフトオフ！', 2000); this.launchAnimFrame = requestAnimationFrame(animate); }, 1500);
+    setStatus('打ち上げ準備完了');
+    this.launchAnimFrame = requestAnimationFrame(mainLoop);
   },
 
   _showResults(simResult, rocketParts, site, targetAlt, targetInc) {

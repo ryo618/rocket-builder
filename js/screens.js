@@ -367,12 +367,13 @@ G.Screens = {
           <div class="telem-row"><span class="telem-label">段</span><span id="tl-stage">1</span></div>
           <div class="telem-row"><span class="telem-label">残燃料</span><span id="tl-fuel">100%</span></div>
         </div>
-        <div class="speed-control">
+        <div class="speed-control" id="speed-control">
           <span class="speed-label">x<span id="speed-val">1</span></span>
           <input type="range" id="speed-slider" min="1" max="20" value="1" step="1"
             oninput="document.getElementById('speed-val').textContent=this.value">
         </div>
-        <div class="launch-status" id="launch-status">点火シーケンス開始</div>
+        <button class="liftoff-btn" id="liftoff-btn">LIFTOFF</button>
+        <div class="launch-status" id="launch-status">打ち上げ準備完了</div>
       </div>
     `;
   },
