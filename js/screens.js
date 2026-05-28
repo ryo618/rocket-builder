@@ -366,6 +366,8 @@ G.Screens = {
           <div class="telem-row"><span class="telem-label">経路角</span><span id="tl-pitch">90°</span></div>
           <div class="telem-row"><span class="telem-label">段</span><span id="tl-stage">1</span></div>
           <div class="telem-row"><span class="telem-label">残燃料</span><span id="tl-fuel">100%</span></div>
+          <div class="telem-row"><span class="telem-label">Ap</span><span id="tl-ap">-- km</span></div>
+          <div class="telem-row"><span class="telem-label">Pe</span><span id="tl-pe">-- km</span></div>
         </div>
         <div class="speed-control" id="speed-control">
           <span class="speed-label">x<span id="speed-val">1</span></span>

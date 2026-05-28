@@ -449,6 +449,18 @@ G.App = {
       sv('tl-pitch', (Math.round(d.fpa*10)/10)+'°'); sv('tl-stage', (d.stage+1)+'/'+simResult.stageCount);
       const fuel0 = data[0].fuel;
       sv('tl-fuel', fuel0>0 ? Math.round((d.fuel/fuel0)*100)+'%' : '0%');
+      // Ap/Pe from orbit calculation
+      if (d.alt > 10000 && d.v > 500) {
+        const orb2 = computeOrbit(d.alt, d.downrange, d.vr, d.vt);
+        if (orb2) {
+          sv('tl-ap', (orb2.apo/1000).toFixed(1)+' km');
+          sv('tl-pe', (orb2.peri/1000).toFixed(1)+' km');
+        } else {
+          sv('tl-ap', '-- km'); sv('tl-pe', '-- km');
+        }
+      } else {
+        sv('tl-ap', '-- km'); sv('tl-pe', '-- km');
+      }
 
       // Status (flight only, not locked)
       if (phase === 'flight' && statusLock <= 0) {
