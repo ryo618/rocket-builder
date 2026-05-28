@@ -179,7 +179,22 @@ G.App = {
     canvas.addEventListener('touchstart', (e) => { if (e.touches.length === 2) { const dx = e.touches[0].clientX - e.touches[1].clientX, dy = e.touches[0].clientY - e.touches[1].clientY; pinchDist = Math.sqrt(dx*dx+dy*dy); }});
     canvas.addEventListener('touchmove', (e) => { if (e.touches.length === 2) { e.preventDefault(); const dx = e.touches[0].clientX - e.touches[1].clientX, dy = e.touches[0].clientY - e.touches[1].clientY, d2 = Math.sqrt(dx*dx+dy*dy); if (pinchDist > 0) { targetZoom *= d2/pinchDist; targetZoom = Math.max(H/30000000, Math.min(H/400, targetZoom)); userZoom = true; } pinchDist = d2; }}, { passive: false });
 
-    const findIdx = (st) => { for (let i = 0; i < data.length; i++) if (data[i].t >= st) return i; return data.length - 1; };
+    const lerpV = (a, b, f) => a + (b - a) * f;
+    const interpData = (st) => {
+      if (st <= data[0].t) return data[0];
+      for (let i = 1; i < data.length; i++) {
+        if (data[i].t >= st) {
+          const d0 = data[i-1], d1 = data[i], f = (st - d0.t) / (d1.t - d0.t);
+          return { t: lerpV(d0.t,d1.t,f), alt: lerpV(d0.alt,d1.alt,f), vr: lerpV(d0.vr,d1.vr,f),
+            vt: lerpV(d0.vt,d1.vt,f), v: lerpV(d0.v,d1.v,f), q: lerpV(d0.q,d1.q,f),
+            accel: lerpV(d0.accel,d1.accel,f), fpa: lerpV(d0.fpa,d1.fpa,f),
+            mass: lerpV(d0.mass,d1.mass,f), fuel: lerpV(d0.fuel,d1.fuel,f),
+            downrange: lerpV(d0.downrange,d1.downrange,f),
+            stage: f<0.5?d0.stage:d1.stage, burning: f<0.5?d0.burning:d1.burning };
+        }
+      }
+      return data[data.length - 1];
+    };
 
     const computeOrbit = (alt, dr, vr, vt) => {
       const r = R + alt, v2 = vr*vr + vt*vt, eps = v2/2 - MU/r;
@@ -215,14 +230,13 @@ G.App = {
         setTimeout(() => this._showResults(simResult, rocketParts, site, targetAlt, targetInc), 1200);
         return;
       }
-      const idx = findIdx(simTimeCursor);
-      const d = data[idx];
+      const d = interpData(simTimeCursor);
       const rw = toWorld(d.downrange, d.alt);
       const fpaRad = (d.fpa || 90) * Math.PI / 180;
 
-      // Trail
+      // Trail (add point if moved enough)
       const lt = trail.length ? trail[trail.length-1] : null;
-      if (!lt || lt.x !== rw.x || lt.y !== rw.y) trail.push({ x: rw.x, y: rw.y });
+      if (!lt || Math.abs(rw.x-lt.x)+Math.abs(rw.y-lt.y) > 10) trail.push({ x: rw.x, y: rw.y });
 
       // --- Separation events ---
       if (d.stage !== prevStage) {
@@ -239,7 +253,7 @@ G.App = {
         debris.push({ type:'fairing', x:rw.x, y:rw.y, dx:-perpX*20+perpY*5, dy:-perpY*20-perpX*5, a:0, av:-0.8, age:0, sz:7 });
         setStatus('フェアリング分離', 2000);
       }
-      if (!payloadSepDone && simResult.success && idx >= data.length - 3) {
+      if (!payloadSepDone && simResult.success && simTimeCursor >= maxSimTime - 6) {
         payloadSepDone = true;
         const fwdX = Math.cos(fpaRad), fwdY = Math.sin(fpaRad);
         debris.push({ type:'payload', x:rw.x+fwdX*30, y:rw.y+fwdY*30, dx:fwdX*3, dy:fwdY*3, a:0, av:0.02, age:0, sz:6 });
@@ -344,10 +358,10 @@ G.App = {
       // Telemetry
       const el = (id) => document.getElementById(id);
       const s = (id,v) => { const e2 = el(id); if(e2) e2.textContent = v; };
-      s('tl-time', d.t+'s'); s('tl-alt', (d.alt/1000).toFixed(1)+' km');
-      s('tl-dr', (d.downrange/1000).toFixed(1)+' km'); s('tl-vel', d.v.toLocaleString()+' m/s');
-      s('tl-q', d.q.toLocaleString()+' Pa'); s('tl-acc', d.accel+' G');
-      s('tl-pitch', d.fpa+'°'); s('tl-stage', (d.stage+1)+'/'+simResult.stageCount);
+      s('tl-time', Math.round(d.t)+'s'); s('tl-alt', (d.alt/1000).toFixed(1)+' km');
+      s('tl-dr', (d.downrange/1000).toFixed(1)+' km'); s('tl-vel', Math.round(d.v).toLocaleString()+' m/s');
+      s('tl-q', Math.round(d.q).toLocaleString()+' Pa'); s('tl-acc', (Math.round(d.accel*100)/100)+' G');
+      s('tl-pitch', (Math.round(d.fpa*10)/10)+'°'); s('tl-stage', (d.stage+1)+'/'+simResult.stageCount);
       const fuel0 = data[0].fuel;
       s('tl-fuel', fuel0>0 ? Math.round((d.fuel/fuel0)*100)+'%' : '0%');
 

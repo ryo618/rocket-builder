@@ -67,9 +67,9 @@ G.Physics = {
 
     const tw0 = stageData[0].gameSLThrust / (totalMass0 * P.g0);
     const twFactor = Math.max(0, Math.min(1, (tw0 - 1.0) / 2.0));
-    const kickoverAlt = 1500 + 3500 * (1 - twFactor);
-    const altFactor = Math.max(0, Math.min(1, (targetAltM - 150000) / 850000));
-    const kickAngle = (5 - 3 * altFactor) * (0.7 + 0.6 * twFactor);
+    const kickoverAlt = 2000 + 4000 * (1 - twFactor);
+    const pitchEndAlt = Math.min(targetAltM * 0.7, 250000);
+    const tangentC = (1.2 + targetAltM / 500000) * (1 + twFactor * 0.3);
     const useManualPitch = pitchRate && pitchRate > 0;
 
     while (t < maxTime && !failed) {
@@ -136,13 +136,14 @@ G.Physics = {
       } else {
         if (!gravityTurnActive && alt > kickoverAlt) {
           gravityTurnActive = true;
-          pitchAngle = 90 - kickAngle;
         }
         if (gravityTurnActive && relV > 10) {
           const relFpa = Math.atan2(relVr, relVt) * 180 / Math.PI;
-          const minPitchBase = tw0 >= 1.8 ? 2 : 5;
-          const minPitch = Math.max(0, minPitchBase * (1 - alt / 60000));
-          pitchAngle = Math.min(pitchAngle, Math.max(minPitch, relFpa));
+          const altFracP = Math.min(0.999, alt / pitchEndAlt);
+          const schedulePitch = Math.atan(tangentC * (1 - altFracP)) * 180 / Math.PI;
+          const maxAoA = alt < 30000 ? 3 : 20;
+          const targetPitch = Math.max(relFpa, Math.min(schedulePitch, relFpa + maxAoA));
+          pitchAngle = Math.min(pitchAngle, Math.max(0, targetPitch));
         }
       }
 
