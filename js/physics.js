@@ -59,6 +59,10 @@ G.Physics = {
     let stagingTimer = 0;
     const MECO_COAST = 1.0;
     const SEP_COAST = 1.5;
+    let allBurnedOut = false;
+    let burnoutTime = 0;
+    const altToleranceM = (site.altTolerance || 100) * 1000;
+    const COAST_TIMEOUT = 120;
 
     const stagingEvents = [];
     const flightData = [];
@@ -274,6 +278,37 @@ G.Physics = {
         lastRecord = t;
       }
 
+      // Detect all-stage burnout
+      if (!allBurnedOut && stagingState === 'idle') {
+        const lastSD = stageData[stageCount - 1];
+        if (currentStage >= stageCount - 1 && lastSD.fuelLeft <= 0) {
+          allBurnedOut = true;
+          burnoutTime = t;
+        }
+      }
+
+      // Altitude tolerance check after burnout
+      if (allBurnedOut) {
+        if (alt > targetAltM + altToleranceM) {
+          failed = true;
+          failReason = '目標高度超過（+' + Math.round((alt - targetAltM) / 1000) + 'km）';
+          failTime = t;
+          failPart = 'orbit';
+          break;
+        }
+        if (vr < 0 && alt < targetAltM - altToleranceM) {
+          failed = true;
+          failReason = '目標高度未達（-' + Math.round((targetAltM - alt) / 1000) + 'km）';
+          failTime = t;
+          failPart = 'orbit';
+          break;
+        }
+        if (t - burnoutTime > COAST_TIMEOUT) {
+          break;
+        }
+      }
+
+      // Success: near target altitude with orbital velocity
       if (alt > targetAltM * 0.8 && vt >= vOrbit * 0.95) {
         break;
       }
@@ -285,7 +320,11 @@ G.Physics = {
     const finalAlt = h / 1000;
     const finalV = Math.sqrt(vr * vr + vt * vt);
     const displayAlt = Math.max(finalAlt, peakAltKm);
-    const achievedOrbit = !failed && displayAlt >= targetAlt * 0.8 && finalV >= vOrbit * 0.85;
+    const tolKm = site.altTolerance || 100;
+    const achievedOrbit = !failed
+      && displayAlt >= targetAlt - tolKm
+      && displayAlt <= targetAlt + tolKm
+      && finalV >= vOrbit * 0.85;
 
     let totalDryMass = fixedMass;
     for (const sd of stageData) totalDryMass += sd.dryMass;

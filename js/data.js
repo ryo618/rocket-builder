@@ -72,12 +72,12 @@ for (const cat of G.CATEGORIES) {
 G.getPartById = (id) => G.ALL_PARTS.find(p => p.id === id);
 
 G.SITES = [
-  { id: 'lv1', level: 1, name: '赤道直下射点', lat: 0, desc: '赤道直下の仮想射点。最も有利な地球自転速度。', multiplier: 1.0, unlockScore: 0, features: ['目標高度', '衛星選択'], limitsEnabled: false },
-  { id: 'lv2', level: 2, name: '低緯度射点', lat: 10, desc: '低緯度の発射場。傾斜角の設定が可能。', multiplier: 1.2, unlockScore: 500, features: ['+ 目標傾斜角'], limitsEnabled: false },
-  { id: 'lv3', level: 3, name: '中緯度射点', lat: 30, desc: '中緯度の発射場。軌道種別の選択が可能。', multiplier: 1.5, unlockScore: 2000, features: ['+ 軌道種別選択'], limitsEnabled: false },
-  { id: 'lv35', level: 3.5, name: '訓練射点（高負荷）', lat: 30, desc: '運用限界が有効化。パーツの破損が発生。', multiplier: 1.8, unlockScore: 5000, features: ['+ 運用限界有効'], limitsEnabled: true },
-  { id: 'lv4', level: 4, name: '高緯度射点', lat: 50, desc: 'ピッチレートの手動調整が可能。', multiplier: 2.2, unlockScore: 12000, features: ['+ ピッチレート調整'], limitsEnabled: true },
-  { id: 'lv5', level: 5, name: '種子島宇宙センター', lat: 30.4, desc: '実在射点。落下域制約あり。', multiplier: 3.0, unlockScore: 30000, features: ['+ 落下域制約'], limitsEnabled: true },
+  { id: 'lv1', level: 1, name: '赤道直下射点', lat: 0, desc: '赤道直下の仮想射点。最も有利な地球自転速度。', multiplier: 1.0, unlockScore: 0, features: ['目標高度', '衛星選択'], limitsEnabled: false, altTolerance: 100 },
+  { id: 'lv2', level: 2, name: '低緯度射点', lat: 10, desc: '低緯度の発射場。傾斜角の設定が可能。', multiplier: 1.2, unlockScore: 500, features: ['+ 目標傾斜角'], limitsEnabled: false, altTolerance: 80 },
+  { id: 'lv3', level: 3, name: '中緯度射点', lat: 30, desc: '中緯度の発射場。軌道種別の選択が可能。', multiplier: 1.5, unlockScore: 2000, features: ['+ 軌道種別選択'], limitsEnabled: false, altTolerance: 50 },
+  { id: 'lv35', level: 3.5, name: '訓練射点（高負荷）', lat: 30, desc: '運用限界が有効化。パーツの破損が発生。', multiplier: 1.8, unlockScore: 5000, features: ['+ 運用限界有効'], limitsEnabled: true, altTolerance: 30 },
+  { id: 'lv4', level: 4, name: '高緯度射点', lat: 50, desc: 'ピッチレートの手動調整が可能。', multiplier: 2.2, unlockScore: 12000, features: ['+ ピッチレート調整'], limitsEnabled: true, altTolerance: 20 },
+  { id: 'lv5', level: 5, name: '種子島宇宙センター', lat: 30.4, desc: '実在射点。落下域制約あり。', multiplier: 3.0, unlockScore: 30000, features: ['+ 落下域制約'], limitsEnabled: true, altTolerance: 10 },
 ];
 
 G.ORBIT_TYPES = [

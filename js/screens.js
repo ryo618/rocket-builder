@@ -341,7 +341,7 @@ G.Screens = {
           </div>` : ''}
           <div class="launch-summary">
             <div>${rocket.stageCount}段式 | ${stats.totalMass.toLocaleString()}kg | ΔV: ${stats.deltaV.toLocaleString()}m/s | T/W: ${stats.tw}</div>
-            <div>射点倍率: x${site.multiplier} ${site.limitsEnabled ? '⚠️ 運用限界有効' : ''}</div>
+            <div>射点倍率: x${site.multiplier} | 投入精度: ±${site.altTolerance}km ${site.limitsEnabled ? '| ⚠️ 運用限界有効' : ''}</div>
           </div>
         </div>
         <button class="launch-btn" onclick="G.App.launch()">
