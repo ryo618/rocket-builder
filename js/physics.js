@@ -55,6 +55,10 @@ G.Physics = {
     let downrange = 0;
     let currentStage = 0;
     let gravityTurnActive = false;
+    let stagingState = 'idle';
+    let stagingTimer = 0;
+    const MECO_COAST = 1.0;
+    const SEP_COAST = 1.5;
 
     const stagingEvents = [];
     const flightData = [];
@@ -91,7 +95,23 @@ G.Physics = {
 
       if (currentStage < stageCount) {
         const sd = stageData[currentStage];
-        if (sd.fuelLeft > 0) {
+        if (stagingState === 'meco_coast') {
+          stagingTimer += dt;
+          if (stagingTimer >= MECO_COAST) {
+            mass -= sd.dryMass;
+            stagingEvents.push({ time: t, type: 'separation', stage: currentStage, alt: alt });
+            stagingState = 'sep_coast';
+            stagingTimer = 0;
+          }
+        } else if (stagingState === 'sep_coast') {
+          stagingTimer += dt;
+          if (stagingTimer >= SEP_COAST) {
+            currentStage++;
+            stagingEvents.push({ time: t, type: 'ignition', stage: currentStage, alt: alt });
+            stagingState = 'idle';
+            stagingTimer = 0;
+          }
+        } else if (sd.fuelLeft > 0) {
           const atmoFactor = Math.min(1, alt / 40000);
           const thrust = sd.gameSLThrust * (1 - atmoFactor) + sd.gameVacThrust * atmoFactor;
           const fuelUsed = Math.min(sd.gameMassFlow * dt, sd.fuelLeft);
@@ -102,9 +122,9 @@ G.Physics = {
           sd.burnTime += dt;
           totalBurnTime += dt;
         } else if (currentStage < stageCount - 1) {
-          mass -= sd.dryMass;
-          stagingEvents.push({ time: t, stage: currentStage + 1, alt: alt });
-          currentStage++;
+          stagingEvents.push({ time: t, type: 'meco', stage: currentStage, alt: alt });
+          stagingState = 'meco_coast';
+          stagingTimer = 0;
         }
       }
 
@@ -157,6 +177,7 @@ G.Physics = {
       if (!fairingJettisoned && alt > 80000) {
         fairingJettisoned = true;
         mass -= fairing.dryMass * 0.7;
+        stagingEvents.push({ time: t, type: 'fairing', alt: alt });
       }
 
       if (site.limitsEnabled && isBurning && currentStage < stageCount) {
@@ -211,6 +232,7 @@ G.Physics = {
           fuel: Math.round(totalFuel),
           downrange: Math.round(downrange),
           stage: currentStage,
+          burning: isBurning,
         });
         lastRecord = t;
       }

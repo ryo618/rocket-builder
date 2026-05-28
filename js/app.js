@@ -148,224 +148,221 @@ G.App = {
     const rect = canvas.parentElement.getBoundingClientRect();
     canvas.width = rect.width;
     canvas.height = rect.height;
-    const W = canvas.width;
-    const H = canvas.height;
+    const W = canvas.width, H = canvas.height;
+    const P = G.PHYSICS, R = P.R_EARTH, MU = P.MU;
 
     const data = simResult.flightData;
-    if (data.length === 0) {
-      this._showResults(simResult, rocketParts, site, targetAlt, targetInc);
-      return;
-    }
+    if (!data.length) { this._showResults(simResult, rocketParts, site, targetAlt, targetInc); return; }
 
     const maxSimTime = data[data.length - 1].t;
-    let lastFrameTime = null;
-    let simTimeCursor = 0;
-    let lastDataIdx = 0;
-
-    const maxAlt = Math.max(...data.map(d => d.alt), 10000);
-    const maxDR = Math.max(...data.map(d => d.downrange), 5000);
-
-    const stars = Array.from({ length: 100 }, () => ({
-      x: Math.random() * W, y: Math.random() * H, s: Math.random() * 2 + 0.5
-    }));
-
-    const trail = [];
-    let prevStage = 0;
-    let stagingEffect = null;
-
-    const margin = 30;
-    const plotW = W - margin * 2;
-    const plotH = H - margin - 10;
-
+    let lastFrameTime = null, simTimeCursor = 0;
+    let camX = 0, camY = 0, zoom = H / 3000, targetZoom = zoom, userZoom = false;
+    const debris = [], trail = [];
+    let prevStage = 0, fairingSepDone = false, payloadSepDone = false, statusLock = 0;
     const statusEl = document.getElementById('launch-status');
     const speedSlider = document.getElementById('speed-slider');
+    const stars = Array.from({ length: 200 }, () => ({ x: Math.random(), y: Math.random(), s: Math.random() * 2 + 0.5 }));
 
-    const findDataIndex = (simTime) => {
-      for (let i = 0; i < data.length; i++) {
-        if (data[i].t >= simTime) return i;
+    const toWorld = (dr, alt) => {
+      const th = dr / R, r = R + alt;
+      return { x: r * Math.sin(th), y: r * Math.cos(th) - R };
+    };
+    const toScr = (wx, wy) => ({ x: (wx - camX) * zoom + W / 2, y: H / 2 - (wy - camY) * zoom });
+
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      targetZoom *= e.deltaY > 0 ? 0.82 : 1.22;
+      targetZoom = Math.max(H / 30000000, Math.min(H / 400, targetZoom));
+      userZoom = true;
+    }, { passive: false });
+    let pinchDist = 0;
+    canvas.addEventListener('touchstart', (e) => { if (e.touches.length === 2) { const dx = e.touches[0].clientX - e.touches[1].clientX, dy = e.touches[0].clientY - e.touches[1].clientY; pinchDist = Math.sqrt(dx*dx+dy*dy); }});
+    canvas.addEventListener('touchmove', (e) => { if (e.touches.length === 2) { e.preventDefault(); const dx = e.touches[0].clientX - e.touches[1].clientX, dy = e.touches[0].clientY - e.touches[1].clientY, d2 = Math.sqrt(dx*dx+dy*dy); if (pinchDist > 0) { targetZoom *= d2/pinchDist; targetZoom = Math.max(H/30000000, Math.min(H/400, targetZoom)); userZoom = true; } pinchDist = d2; }}, { passive: false });
+
+    const findIdx = (st) => { for (let i = 0; i < data.length; i++) if (data[i].t >= st) return i; return data.length - 1; };
+
+    const computeOrbit = (alt, dr, vr, vt) => {
+      const r = R + alt, v2 = vr*vr + vt*vt, eps = v2/2 - MU/r;
+      if (eps >= 0) return null;
+      const hAM = r * vt, a = -MU / (2*eps), p = hAM*hAM / MU;
+      const ecc = Math.sqrt(Math.max(0, 1 - p/a));
+      if (ecc >= 1 || ecc < 0.0001) return null;
+      const sinNu = vr * hAM / (MU * ecc), cosNu = (vt * hAM / MU - 1) / ecc;
+      const nu = Math.atan2(sinNu, cosNu), omega = dr / R - nu;
+      const pts = [];
+      for (let i = 0; i <= 360; i += 2) {
+        const nuP = i * Math.PI / 180, rP = p / (1 + ecc * Math.cos(nuP));
+        if (rP <= R) continue;
+        const ang = omega + nuP;
+        pts.push({ x: rP * Math.sin(ang), y: rP * Math.cos(ang) - R });
       }
-      return data.length - 1;
+      return { pts, peri: a*(1-ecc)-R, apo: a*(1+ecc)-R };
+    };
+
+    const setStatus = (txt, lockMs) => {
+      if (statusEl) statusEl.textContent = txt;
+      statusLock = lockMs || 0;
     };
 
     const animate = (now) => {
       if (!lastFrameTime) lastFrameTime = now;
       const speed = speedSlider ? parseInt(speedSlider.value) || 1 : 1;
-      const dtReal = (now - lastFrameTime) / 1000;
+      const dtR = (now - lastFrameTime) / 1000;
       lastFrameTime = now;
-      simTimeCursor += dtReal * speed;
-
-      const idx = findDataIndex(simTimeCursor);
-      lastDataIdx = idx;
-
+      simTimeCursor += dtR * speed;
       if (simTimeCursor >= maxSimTime) {
         cancelAnimationFrame(this.launchAnimFrame);
-        setTimeout(() => {
-          this._showResults(simResult, rocketParts, site, targetAlt, targetInc);
-        }, 1200);
+        setTimeout(() => this._showResults(simResult, rocketParts, site, targetAlt, targetInc), 1200);
         return;
       }
-
+      const idx = findIdx(simTimeCursor);
       const d = data[idx];
-      const lastTrailPt = trail.length > 0 ? trail[trail.length - 1] : null;
-      if (!lastTrailPt || lastTrailPt.x !== d.downrange || lastTrailPt.y !== d.alt) {
-        trail.push({ x: d.downrange, y: d.alt });
-      }
-
-      const viewAlt = Math.max(15000, d.alt * 1.5, maxAlt * (idx / data.length) * 1.2);
-      const viewDR = Math.max(10000, d.downrange * 1.8, maxDR * (idx / data.length) * 1.2);
-
-      const toX = (dr) => margin + (dr / viewDR) * plotW;
-      const toY = (alt) => H - margin - (alt / viewAlt) * plotH;
-
-      const skyDark = Math.min(1, d.alt / 80000);
-      const bgR = Math.round(5 + (1 - skyDark) * 15);
-      const bgG = Math.round(5 + (1 - skyDark) * 10);
-      const bgB = Math.round(25 + (1 - skyDark) * 15);
-      ctx.fillStyle = `rgb(${bgR},${bgG},${bgB})`;
-      ctx.fillRect(0, 0, W, H);
-
-      ctx.fillStyle = '#fff';
-      for (const star of stars) {
-        ctx.globalAlpha = (0.2 + skyDark * 0.8) * (0.5 + Math.random() * 0.5);
-        ctx.fillRect(star.x, star.y, star.s, star.s);
-      }
-      ctx.globalAlpha = 1;
-
-      const groundY = toY(0);
-      if (groundY < H) {
-        ctx.fillStyle = '#0d2a15';
-        ctx.fillRect(0, groundY, W, H - groundY);
-        ctx.strokeStyle = '#2196f3';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(0, groundY);
-        ctx.lineTo(W, groundY);
-        ctx.stroke();
-      }
-
-      const atmoTopAlt = 80000;
-      const atmoTopY = toY(atmoTopAlt);
-      if (atmoTopY < groundY) {
-        const grad = ctx.createLinearGradient(0, atmoTopY, 0, groundY);
-        grad.addColorStop(0, 'rgba(30,60,120,0)');
-        grad.addColorStop(0.6, 'rgba(40,80,160,0.12)');
-        grad.addColorStop(1, 'rgba(60,130,200,0.25)');
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, Math.max(0, atmoTopY), W, groundY - Math.max(0, atmoTopY));
-      }
-
-      if (trail.length > 1) {
-        ctx.strokeStyle = 'rgba(255,140,0,0.5)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        for (let i = 0; i < trail.length; i++) {
-          const sx = toX(trail[i].x);
-          const sy = toY(trail[i].y);
-          if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
-        }
-        ctx.stroke();
-      }
-
-      if (d.stage !== prevStage) {
-        stagingEffect = { x: d.downrange, y: d.alt, frame: 0 };
-        if (statusEl) statusEl.textContent = (d.stage + 1) + '段目 点火！';
-        prevStage = d.stage;
-      }
-
-      if (stagingEffect && stagingEffect.frame < 20) {
-        const progress = stagingEffect.frame / 20;
-        const sx = toX(stagingEffect.x);
-        const sy = toY(stagingEffect.y);
-        const radius = 5 + progress * 35;
-        ctx.beginPath();
-        ctx.arc(sx, sy, radius, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255,200,50,${0.8 * (1 - progress)})`;
-        ctx.fill();
-        stagingEffect.frame++;
-      }
-
-      const rocketX = toX(d.downrange);
-      const rocketY = toY(d.alt);
+      const rw = toWorld(d.downrange, d.alt);
       const fpaRad = (d.fpa || 90) * Math.PI / 180;
 
-      const rW = 8;
-      const rH = 22;
+      // Trail
+      const lt = trail.length ? trail[trail.length-1] : null;
+      if (!lt || lt.x !== rw.x || lt.y !== rw.y) trail.push({ x: rw.x, y: rw.y });
 
+      // --- Separation events ---
+      if (d.stage !== prevStage) {
+        const perpX = -Math.sin(fpaRad), perpY = Math.cos(fpaRad);
+        debris.push({ type:'stage', x:rw.x, y:rw.y, dx: -perpY*15, dy: perpX*15, a: Math.PI/2-fpaRad, av:0.3, age:0, sz:14 });
+        setStatus((prevStage+1)+'/'+(d.stage+1)+'段 分離', 2000);
+        setTimeout(() => setStatus((d.stage+1)+'段目 点火！', 1500), Math.max(100, 800/speed));
+        prevStage = d.stage;
+      }
+      if (!fairingSepDone && d.alt > 80000) {
+        fairingSepDone = true;
+        const perpX = -Math.sin(fpaRad), perpY = Math.cos(fpaRad);
+        debris.push({ type:'fairing', x:rw.x, y:rw.y, dx: perpX*20+perpY*5, dy: perpY*20-perpX*5, a:0, av:0.8, age:0, sz:7 });
+        debris.push({ type:'fairing', x:rw.x, y:rw.y, dx:-perpX*20+perpY*5, dy:-perpY*20-perpX*5, a:0, av:-0.8, age:0, sz:7 });
+        setStatus('フェアリング分離', 2000);
+      }
+      if (!payloadSepDone && simResult.success && idx >= data.length - 3) {
+        payloadSepDone = true;
+        const fwdX = Math.cos(fpaRad), fwdY = Math.sin(fpaRad);
+        debris.push({ type:'payload', x:rw.x+fwdX*30, y:rw.y+fwdY*30, dx:fwdX*3, dy:fwdY*3, a:0, av:0.02, age:0, sz:6 });
+        setStatus('衛星分離！', 3000);
+      }
+
+      // --- Camera ---
+      const camLerp = Math.min(0.15, 0.06 + speed * 0.005);
+      camX += (rw.x - camX) * camLerp;
+      camY += (rw.y - camY) * camLerp;
+      if (!userZoom) {
+        const span = Math.max(3000, d.alt * 1.8, Math.abs(d.downrange) * 0.4);
+        targetZoom = H * 0.4 / span;
+        targetZoom = Math.max(H / 30000000, Math.min(H / 400, targetZoom));
+      }
+      zoom += (targetZoom - zoom) * 0.06;
+
+      // --- Debris update ---
+      for (const db of debris) {
+        db.x += db.dx * dtR * speed;
+        db.y += db.dy * dtR * speed;
+        db.a += db.av * dtR * speed;
+        db.age += dtR * speed;
+      }
+      if (statusLock > 0) statusLock -= dtR * speed * 1000;
+
+      // === DRAW ===
+      const skyDk = Math.min(1, d.alt / 80000);
+      ctx.fillStyle = `rgb(${Math.round(5+(1-skyDk)*15)},${Math.round(5+(1-skyDk)*10)},${Math.round(25+(1-skyDk)*15)})`;
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#fff';
+      for (const s of stars) { ctx.globalAlpha = (0.2+skyDk*0.8)*(0.5+Math.random()*0.5); ctx.fillRect(s.x*W, s.y*H, s.s, s.s); }
+      ctx.globalAlpha = 1;
+
+      // Orbit prediction
+      if (d.alt > 50000 && d.v > 2000) {
+        const orb = computeOrbit(d.alt, d.downrange, d.vr, d.vt);
+        if (orb && orb.pts.length > 2) {
+          ctx.strokeStyle = orb.peri > 0 ? 'rgba(0,255,120,0.5)' : 'rgba(255,80,80,0.5)';
+          ctx.lineWidth = 2; ctx.setLineDash([8,5]); ctx.beginPath();
+          for (let i = 0; i < orb.pts.length; i++) { const sp = toScr(orb.pts[i].x, orb.pts[i].y); i===0 ? ctx.moveTo(sp.x, sp.y) : ctx.lineTo(sp.x, sp.y); }
+          ctx.stroke(); ctx.setLineDash([]);
+        }
+      }
+
+      // Earth
+      const ecS = toScr(0, -R);
+      const eRP = R * zoom;
+      const earthGrad = ctx.createRadialGradient(ecS.x, ecS.y - eRP * 0.3, eRP * 0.1, ecS.x, ecS.y, eRP);
+      earthGrad.addColorStop(0, '#1a4a2a'); earthGrad.addColorStop(0.7, '#0f3518'); earthGrad.addColorStop(1, '#0a2510');
+      ctx.fillStyle = earthGrad; ctx.beginPath(); ctx.arc(ecS.x, ecS.y, eRP, 0, Math.PI*2); ctx.fill();
+      // Atmosphere glow
+      const atmoP = 100000 * zoom;
+      if (atmoP > 1) {
+        const ag = ctx.createRadialGradient(ecS.x, ecS.y, eRP, ecS.x, ecS.y, eRP+atmoP);
+        ag.addColorStop(0, 'rgba(80,160,255,0.25)'); ag.addColorStop(0.5, 'rgba(40,100,200,0.1)'); ag.addColorStop(1, 'rgba(20,50,120,0)');
+        ctx.fillStyle = ag; ctx.beginPath(); ctx.arc(ecS.x, ecS.y, eRP+atmoP, 0, Math.PI*2); ctx.fill();
+      }
+      ctx.strokeStyle = '#4db8ff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(ecS.x, ecS.y, eRP, 0, Math.PI*2); ctx.stroke();
+
+      // Trail
+      if (trail.length > 1) {
+        ctx.strokeStyle = 'rgba(255,140,0,0.5)'; ctx.lineWidth = 2; ctx.beginPath();
+        for (let i = 0; i < trail.length; i++) { const sp = toScr(trail[i].x, trail[i].y); i===0?ctx.moveTo(sp.x,sp.y):ctx.lineTo(sp.x,sp.y); }
+        ctx.stroke();
+      }
+
+      // Debris
+      for (const db of debris) {
+        if (db.age > 20) continue;
+        const dp = toScr(db.x, db.y); const al = Math.max(0, 1 - db.age / 12);
+        ctx.save(); ctx.translate(dp.x, dp.y); ctx.rotate(db.a); ctx.globalAlpha = al;
+        if (db.type === 'stage') { ctx.fillStyle='#888'; ctx.fillRect(-3,-db.sz/2,6,db.sz); }
+        else if (db.type === 'fairing') { ctx.fillStyle='#aaa'; ctx.beginPath(); ctx.arc(0,0,db.sz/2,0,Math.PI); ctx.fill(); }
+        else if (db.type === 'payload') { ctx.fillStyle='#ffcc00'; ctx.fillRect(-4,-3,8,6); ctx.fillStyle='#3366ff'; ctx.fillRect(-12,-2,7,4); ctx.fillRect(5,-2,7,4); }
+        ctx.globalAlpha = 1; ctx.restore();
+      }
+
+      // Rocket
+      const rp = toScr(rw.x, rw.y);
+      const rW2 = 10, rH2 = 26;
+      // Glow indicator (always visible even at extreme zoom-out)
       ctx.save();
-      ctx.translate(rocketX, rocketY);
-      ctx.rotate(Math.PI / 2 - fpaRad);
-
-      ctx.fillStyle = '#ddd';
-      ctx.beginPath();
-      ctx.moveTo(0, -rH / 2);
-      ctx.lineTo(-rW / 3, -rH / 4);
-      ctx.lineTo(-rW / 3, rH / 3);
-      ctx.lineTo(rW / 3, rH / 3);
-      ctx.lineTo(rW / 3, -rH / 4);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.fillStyle = '#999';
-      ctx.beginPath();
-      ctx.moveTo(0, -rH / 2);
-      ctx.lineTo(-rW / 2.5, -rH / 5);
-      ctx.lineTo(rW / 2.5, -rH / 5);
-      ctx.closePath();
-      ctx.fill();
-
-      if (d.fuel > 0) {
-        const flameLen = 10 + Math.random() * 8;
-        const grad = ctx.createLinearGradient(0, rH / 3, 0, rH / 3 + flameLen);
-        grad.addColorStop(0, '#ff6600');
-        grad.addColorStop(0.5, '#ff3300');
-        grad.addColorStop(1, 'rgba(255,100,0,0)');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.moveTo(-rW / 4, rH / 3);
-        ctx.lineTo(rW / 4, rH / 3);
-        ctx.lineTo(Math.random() * 3 - 1.5, rH / 3 + flameLen);
-        ctx.closePath();
-        ctx.fill();
+      const glowR = Math.max(8, 16 / Math.max(0.0001, zoom * 500));
+      const glow = ctx.createRadialGradient(rp.x, rp.y, 0, rp.x, rp.y, glowR);
+      glow.addColorStop(0, d.burning ? 'rgba(255,120,0,0.6)' : 'rgba(200,200,255,0.4)');
+      glow.addColorStop(1, 'rgba(255,120,0,0)');
+      ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(rp.x, rp.y, glowR, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+      ctx.save(); ctx.translate(rp.x, rp.y); ctx.rotate(Math.PI/2 - fpaRad);
+      ctx.fillStyle = '#e0e0e0'; ctx.beginPath();
+      ctx.moveTo(0,-rH2/2); ctx.lineTo(-rW2/3,-rH2/4); ctx.lineTo(-rW2/3,rH2/3); ctx.lineTo(rW2/3,rH2/3); ctx.lineTo(rW2/3,-rH2/4); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#aaa'; ctx.beginPath(); ctx.moveTo(0,-rH2/2); ctx.lineTo(-rW2/2.5,-rH2/5); ctx.lineTo(rW2/2.5,-rH2/5); ctx.closePath(); ctx.fill();
+      if (d.burning) {
+        const fl = 14+Math.random()*10;
+        const fg = ctx.createLinearGradient(0,rH2/3,0,rH2/3+fl);
+        fg.addColorStop(0,'#ffaa00'); fg.addColorStop(0.4,'#ff6600'); fg.addColorStop(0.7,'#ff3300'); fg.addColorStop(1,'rgba(255,80,0,0)');
+        ctx.fillStyle = fg; ctx.beginPath(); ctx.moveTo(-rW2/3.5,rH2/3); ctx.lineTo(rW2/3.5,rH2/3); ctx.lineTo(Math.random()*4-2,rH2/3+fl); ctx.closePath(); ctx.fill();
       }
       ctx.restore();
 
+      // Telemetry
       const el = (id) => document.getElementById(id);
-      const tlTime = el('tl-time');
-      if (tlTime) tlTime.textContent = d.t + 's';
-      const tlAlt = el('tl-alt');
-      if (tlAlt) tlAlt.textContent = (d.alt / 1000).toFixed(1) + ' km';
-      const tlDr = el('tl-dr');
-      if (tlDr) tlDr.textContent = (d.downrange / 1000).toFixed(1) + ' km';
-      const tlVel = el('tl-vel');
-      if (tlVel) tlVel.textContent = d.v.toLocaleString() + ' m/s';
-      const tlQ = el('tl-q');
-      if (tlQ) tlQ.textContent = d.q.toLocaleString() + ' Pa';
-      const tlAcc = el('tl-acc');
-      if (tlAcc) tlAcc.textContent = d.accel + ' G';
-      const tlPitch = el('tl-pitch');
-      if (tlPitch) tlPitch.textContent = d.fpa + '°';
-      const tlStage = el('tl-stage');
-      if (tlStage) tlStage.textContent = (d.stage + 1) + '/' + simResult.stageCount;
-      const tlFuel = el('tl-fuel');
-      if (tlFuel) {
-        const fuel0 = data[0].fuel;
-        tlFuel.textContent = fuel0 > 0 ? Math.round((d.fuel / fuel0) * 100) + '%' : '0%';
-      }
+      const s = (id,v) => { const e2 = el(id); if(e2) e2.textContent = v; };
+      s('tl-time', d.t+'s'); s('tl-alt', (d.alt/1000).toFixed(1)+' km');
+      s('tl-dr', (d.downrange/1000).toFixed(1)+' km'); s('tl-vel', d.v.toLocaleString()+' m/s');
+      s('tl-q', d.q.toLocaleString()+' Pa'); s('tl-acc', d.accel+' G');
+      s('tl-pitch', d.fpa+'°'); s('tl-stage', (d.stage+1)+'/'+simResult.stageCount);
+      const fuel0 = data[0].fuel;
+      s('tl-fuel', fuel0>0 ? Math.round((d.fuel/fuel0)*100)+'%' : '0%');
 
-      if (!stagingEffect || stagingEffect.frame >= 20) {
-        if (d.alt > 100000 && statusEl) statusEl.textContent = '大気圏離脱';
-        else if (d.alt > 50000 && statusEl) statusEl.textContent = '上層大気通過中';
-        else if (d.alt > 10000 && statusEl) statusEl.textContent = 'Max-Q通過';
-        else if (d.t > 2 && statusEl) statusEl.textContent = '上昇中';
+      // Status (only if not locked by event)
+      if (statusLock <= 0) {
+        if (d.alt > 100000) setStatus('大気圏離脱');
+        else if (d.alt > 50000) setStatus('上層大気通過中');
+        else if (d.alt > 10000) setStatus('Max-Q通過');
+        else if (d.t > 2) setStatus('上昇中');
       }
 
       this.launchAnimFrame = requestAnimationFrame(animate);
     };
 
-    setTimeout(() => {
-      if (statusEl) statusEl.textContent = 'リフトオフ！';
-      this.launchAnimFrame = requestAnimationFrame(animate);
-    }, 1500);
+    setTimeout(() => { setStatus('リフトオフ！', 2000); this.launchAnimFrame = requestAnimationFrame(animate); }, 1500);
   },
 
   _showResults(simResult, rocketParts, site, targetAlt, targetInc) {
