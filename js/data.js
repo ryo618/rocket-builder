@@ -92,8 +92,10 @@ G.ORBIT_TYPES = [
   { id: 'leo', name: 'LEO', minAlt: 200, maxAlt: 500, multiplier: 1.0 },
   { id: 'meo', name: 'MEO', minAlt: 501, maxAlt: 2000, multiplier: 1.5 },
   { id: 'sso', name: 'SSO (太陽同期)', minAlt: 600, maxAlt: 800, multiplier: 2.0 },
-  { id: 'gto', name: 'GTO (静止遷移)', minAlt: 250, maxAlt: 35786, multiplier: 3.0 },
+  { id: 'gto', name: 'GTO (静止遷移)', minAlt: 250, maxAlt: 35786, multiplier: 3.0, minLevel: 4 },
 ];
+
+G.ssoInclination = (altKm) => Math.round((96.5 + 0.004 * (altKm - 200)) * 10) / 10;
 
 G.PHYSICS = {
   G: 6.674e-11,

@@ -199,59 +199,81 @@ G.Screens = {
 
   _renderRocketSVG(r) {
     const sc = r.stageCount;
-    const stageH = 60;
-    const interH = 12;
-    const noseH = 50;
-    const payloadH = 25;
-    const engineH = 35;
-    const exhaustH = 20;
-    const totalH = noseH + payloadH + sc * (stageH + interH) + engineH + exhaustH;
+    const bw = 14; // body width
+    const cx = 50; // center x
+    const fairH = 35;
+    const nozH = 12;
+    const interH = 6;
+    const exH = 18;
+    // Stage heights (bottom stages taller)
+    const stgH = [];
+    let swTot = 0;
+    for (let i = 0; i < sc; i++) { const w = 1 + (sc - 1 - i) * 0.6; stgH.push(w); swTot += w; }
+    const bodyZone = bw * 10 - fairH - nozH; // L/D≈10
+    for (let i = 0; i < sc; i++) stgH[i] = Math.round(bodyZone * stgH[i] / swTot);
+    const totalH = fairH + stgH.reduce((a,b)=>a+b,0) + Math.max(0,sc-1)*interH + nozH + exH + 10;
 
-    let y = 10;
-    let svg = `<svg viewBox="0 0 100 ${totalH + 20}" class="rocket-svg" style="height:${Math.min(totalH + 20, 350)}px">
+    let y = 5;
+    const fCol = G.RARITY[r.fairing.rarity].color;
+    const pCol = G.RARITY[r.payload.rarity].color;
+    let svg = `<svg viewBox="0 0 100 ${totalH}" class="rocket-svg" style="height:${Math.min(totalH, 400)}px">
       <defs>
-        <linearGradient id="bodyGrad" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%" stop-color="#ccc"/>
-          <stop offset="50%" stop-color="#fff"/>
-          <stop offset="100%" stop-color="#aaa"/>
+        <linearGradient id="metalG" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="#999"/><stop offset="35%" stop-color="#ddd"/>
+          <stop offset="50%" stop-color="#eee"/><stop offset="65%" stop-color="#ddd"/>
+          <stop offset="100%" stop-color="#999"/>
         </linearGradient>
       </defs>`;
 
-    svg += `<path d="M50 ${y} L35 ${y + noseH} L65 ${y + noseH} Z" fill="url(#bodyGrad)" stroke="${G.RARITY[r.fairing.rarity].color}" stroke-width="1.5"/>`;
-    y += noseH;
+    // Ogive fairing
+    const fl = cx - bw/2, fr = cx + bw/2;
+    svg += `<path d="M${cx} ${y} C${cx-1} ${y+fairH*0.25},${fl+1} ${y+fairH*0.55},${fl} ${y+fairH} L${fr} ${y+fairH} C${fr-1} ${y+fairH*0.55},${cx+1} ${y+fairH*0.25},${cx} ${y}" fill="url(#metalG)" stroke="${fCol}" stroke-width="1.2"/>`;
+    svg += `<line x1="${cx}" y1="${y}" x2="${cx}" y2="${y+fairH}" stroke="#aaa" stroke-width="0.4"/>`;
+    // Payload inside fairing
+    svg += `<rect x="${cx-bw*0.3}" y="${y+fairH-12}" width="${bw*0.6}" height="8" fill="#2a2a4a" stroke="${pCol}" stroke-width="0.8" rx="1"/>`;
+    svg += `<text x="${cx}" y="${y+fairH-5}" text-anchor="middle" fill="${pCol}" font-size="5">SAT</text>`;
+    y += fairH;
 
-    svg += `<rect x="35" y="${y}" width="30" height="${payloadH}" fill="#2a2a4a" stroke="${G.RARITY[r.payload.rarity].color}" stroke-width="1.5" rx="2"/>`;
-    svg += `<text x="50" y="${y + 16}" text-anchor="middle" fill="${G.RARITY[r.payload.rarity].color}" font-size="7">SAT</text>`;
-    y += payloadH;
-
-    for (let i = sc - 1; i >= 0; i--) {
-      const s = r.stages[i];
+    // Stages (top to bottom)
+    for (let si = sc - 1; si >= 0; si--) {
+      const s = r.stages[si];
       const tCol = G.RARITY[s.tank.rarity].color;
       const eCol = G.RARITY[s.engine.rarity].color;
+      const h = stgH[si];
+      const wMult = 1.0 + (sc - 1 - si) * 0.02;
+      const sw = bw * wMult / 2;
 
-      const structForSvg = (i < sc - 1 && r.structures && r.structures[i]) ? r.structures[i] : null;
-      const connStroke = structForSvg ? G.RARITY[structForSvg.rarity].color : '#666';
-      svg += `<rect x="36" y="${y}" width="28" height="${interH}" fill="#444" stroke="${connStroke}" stroke-width="1" rx="1"/>`;
-      y += interH;
-
-      const tankH = stageH - 15;
-      svg += `<rect x="33" y="${y}" width="34" height="${tankH}" fill="url(#bodyGrad)" stroke="${tCol}" stroke-width="1.5" rx="3"/>`;
-      for (let ln = 1; ln < 3; ln++) {
-        const ly = y + (tankH / 3) * ln;
-        svg += `<line x1="33" y1="${ly}" x2="67" y2="${ly}" stroke="#999" stroke-width="0.5"/>`;
+      // Stage body
+      svg += `<rect x="${cx-sw}" y="${y}" width="${sw*2}" height="${h}" fill="url(#metalG)" stroke="${tCol}" stroke-width="1" rx="1"/>`;
+      // Tank section lines
+      if (h > 20) {
+        for (let ln = 1; ln < 3; ln++) {
+          const ly = y + (h/3)*ln;
+          svg += `<line x1="${cx-sw}" y1="${ly}" x2="${cx+sw}" y2="${ly}" stroke="#999" stroke-width="0.3"/>`;
+        }
       }
-      y += tankH;
+      // Engine label
+      svg += `<rect x="${cx-sw+0.5}" y="${y+h-6}" width="${sw*2-1}" height="5" fill="#555" stroke="${eCol}" stroke-width="0.6" rx="0.5"/>`;
+      y += h;
 
-      if (i > 0) {
-        svg += `<path d="M38 ${y} L30 ${y + 15} L40 ${y + 12} L50 ${y + 17} L60 ${y + 12} L70 ${y + 15} L62 ${y} Z" fill="#555" stroke="${eCol}" stroke-width="1"/>`;
-        y += 15;
-      } else {
-        svg += `<path d="M38 ${y} L30 ${y + engineH} L40 ${y + engineH - 5} L50 ${y + engineH + 5} L60 ${y + engineH - 5} L70 ${y + engineH} L62 ${y} Z" fill="#555" stroke="${eCol}" stroke-width="1.5"/>`;
-        svg += `<ellipse cx="50" cy="${y + engineH + 5}" rx="12" ry="5" fill="#333" stroke="${eCol}" stroke-width="1"/>`;
-        svg += `<ellipse cx="50" cy="${y + engineH + 15}" rx="8" ry="12" fill="${eCol}" opacity="0.3"/>`;
-        y += engineH + exhaustH;
+      // Interstage joint
+      if (si > 0) {
+        const structP = r.structures && r.structures[si-1] ? r.structures[si-1] : null;
+        const sCol = structP ? G.RARITY[structP.rarity].color : '#666';
+        const jw = sw * 1.1;
+        svg += `<rect x="${cx-jw}" y="${y}" width="${jw*2}" height="${interH}" fill="#555" stroke="${sCol}" stroke-width="0.8" rx="0.5"/>`;
+        y += interH;
       }
     }
+
+    // Engine nozzle
+    const ntw = bw * 0.35, nbw = bw * 0.5;
+    const eCol = G.RARITY[r.stages[0].engine.rarity].color;
+    svg += `<path d="M${cx-ntw} ${y} L${cx-nbw} ${y+nozH} L${cx+nbw} ${y+nozH} L${cx+ntw} ${y} Z" fill="#555" stroke="${eCol}" stroke-width="0.8"/>`;
+    y += nozH;
+
+    // Exhaust glow
+    svg += `<ellipse cx="${cx}" cy="${y+exH/2}" rx="${nbw*0.7}" ry="${exH/2}" fill="${eCol}" opacity="0.25"/>`;
 
     svg += '</svg>';
     return svg;
@@ -342,17 +364,21 @@ G.Screens = {
             <input type="range" min="150" max="2000" step="10" value="${s.get('targetAltitude')}"
               oninput="G.App.setAltitude(this.value)">
           </div>
-          ${site.level >= 2 ? `
+          ${site.level >= 2 ? (() => {
+            const isSSO = s.get('targetOrbitType') === 'sso' && site.level >= 3;
+            const ssoInc = G.ssoInclination(s.get('targetAltitude'));
+            return `
           <div class="config-section">
-            <div class="config-label">目標傾斜角: <span id="inc-val">${s.get('targetInclination')}</span>°</div>
-            <input type="range" min="0" max="90" step="1" value="${s.get('targetInclination')}"
-              oninput="G.App.setInclination(this.value)">
-          </div>` : ''}
+            <div class="config-label">目標傾斜角: <span id="inc-val">${isSSO ? ssoInc : s.get('targetInclination')}</span>°${isSSO ? ' (SSO自動)' : ''}</div>
+            <input type="range" min="0" max="90" step="1" value="${isSSO ? ssoInc : s.get('targetInclination')}"
+              oninput="G.App.setInclination(this.value)" ${isSSO ? 'disabled' : ''}>
+          </div>`;
+          })() : ''}
           ${site.level >= 3 ? `
           <div class="config-section">
             <div class="config-label">軌道種別</div>
             <div class="orbit-btns">
-              ${G.ORBIT_TYPES.filter(o => o.id !== 'ballistic').map(o => `
+              ${G.ORBIT_TYPES.filter(o => o.id !== 'ballistic' && (!o.minLevel || site.level >= o.minLevel)).map(o => `
                 <button class="orbit-btn ${s.get('targetOrbitType') === o.id ? 'active' : ''}"
                   onclick="G.App.setOrbitType('${o.id}')">
                   ${o.name} (x${o.multiplier})

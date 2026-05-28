@@ -110,9 +110,17 @@ G.App = {
   },
 
   setAltitude(val) {
-    G.State.set('targetAltitude', parseInt(val));
+    const alt = parseInt(val);
+    G.State.set('targetAltitude', alt);
     const el = document.getElementById('alt-val');
     if (el) el.textContent = val;
+    // SSO auto-inclination
+    if (G.State.get('targetOrbitType') === 'sso') {
+      const ssoInc = G.ssoInclination(alt);
+      G.State.set('targetInclination', ssoInc);
+      const incEl = document.getElementById('inc-val');
+      if (incEl) incEl.textContent = ssoInc;
+    }
   },
 
   setInclination(val) {
@@ -123,6 +131,10 @@ G.App = {
 
   setOrbitType(type) {
     G.State.set('targetOrbitType', type);
+    if (type === 'sso') {
+      const ssoInc = G.ssoInclination(G.State.get('targetAltitude'));
+      G.State.set('targetInclination', ssoInc);
+    }
     this.navigate('launch');
   },
 
@@ -152,8 +164,9 @@ G.App = {
     const P = G.PHYSICS, R = P.R_EARTH, MU = P.MU;
     // Rocket size based on stage count (proportion to 85-unit mast: 50%/70%/90%)
     const sc_ = simResult.stageCount;
-    const rH2 = [0, 50, 70, 90][sc_];
-    const rW2 = [0, 10, 13, 15][sc_];
+    // L/D ≈ 10 proportions (realistic rocket slenderness)
+    const rH2 = [0, 70, 110, 140][sc_];
+    const rW2 = [0, 3.5, 5, 6][sc_];
 
     const data = simResult.flightData;
     if (!data.length) { this._showResults(simResult, rocketParts, site, targetAlt, targetInc); return; }
@@ -240,8 +253,8 @@ G.App = {
       ctx.fillStyle = '#555'; ctx.fillRect(sx-38*sc, sy-5*sc, 76*sc, 6*sc);
       // Flame trench
       ctx.fillStyle = '#333'; ctx.fillRect(sx-12*sc, sy+6*sc, 24*sc, 10*sc);
-      // Tower
-      const tx = sx+28*sc, tw = 7*sc, th = 85*sc;
+      // Tower (scales with rocket height)
+      const tx = sx+28*sc, tw = 7*sc, th = (rH2 + 20) * sc;
       ctx.fillStyle = '#555'; ctx.fillRect(tx, sy-th, tw, th+6*sc);
       // Trusses
       if (sc > 0.2) {

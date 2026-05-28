@@ -26,6 +26,9 @@ G.Physics = {
       burnTime: 0,
     }));
 
+    const hasAero = site.level >= 2;
+    const stageInitialFuel = stageData.map((_, i) => stages[i].tank.propellantCapacity);
+
     let fixedMass = fairing.dryMass + payload.mass + (obc ? obc.dryMass : 0);
     for (const st of structures) fixedMass += st.dryMass;
     let totalMass0 = fixedMass;
@@ -91,34 +94,48 @@ G.Physics = {
     const staticMarginFrac6 = 0.08;
     const dampCoeff6 = 0.3;
 
-    // Pre-roll base failures with random times (OBC reliability bonus reduces fail prob)
+    // Phase-dependent failure pre-rolls
     const baseFailChecks = [];
-    let scheduledFail = null;
     const reliabilityBonus = obc ? (obc.reliabilityBonus || 0) : 0;
+    const stageEngineFailFrac = [];
+    const stageTankFailFrac = [];
+    const sepFails = [];
+    let fairingSepFail = false;
+    let obcFailTime = null;
     {
-      const allParts = [];
+      // Per-stage engine & tank (fail during that stage's burn)
       for (let i = 0; i < stageCount; i++) {
-        allParts.push({ part: stages[i].engine, name: (i + 1) + '段目エンジン基礎故障' });
-        allParts.push({ part: stages[i].tank, name: (i + 1) + '段目タンク基礎故障' });
-      }
-      for (let i = 0; i < structures.length; i++) {
-        const sLabel = structures.length === 1 ? '構造材基礎故障' : `構造材${i+1}基礎故障`;
-        allParts.push({ part: structures[i], name: sLabel });
-      }
-      allParts.push({ part: fairing, name: 'フェアリング基礎故障' });
-      allParts.push({ part: payload, name: 'ペイロード基礎故障' });
+        const eP = G.RARITY[stages[i].engine.rarity].baseFail * (1 - reliabilityBonus);
+        const eR = Math.random(); const eF = eR < eP;
+        baseFailChecks.push({ name: `${i+1}段目エンジン`, rarity: stages[i].engine.rarity, prob: eP, roll: eR, failed: eF });
+        stageEngineFailFrac[i] = eF ? 0.1 + Math.random() * 0.8 : null;
 
-      for (const { part, name } of allParts) {
-        const pBase = G.RARITY[part.rarity].baseFail * (1 - reliabilityBonus);
-        const roll = Math.random();
-        const didFail = roll < pBase;
-        baseFailChecks.push({ name, rarity: part.rarity, prob: pBase, roll, failed: didFail });
-        if (didFail) {
-          const ft = Math.random() * 600;
-          if (!scheduledFail || ft < scheduledFail.time) {
-            scheduledFail = { time: ft, reason: name, part: part.category || 'unknown' };
-          }
-        }
+        const tP = G.RARITY[stages[i].tank.rarity].baseFail * (1 - reliabilityBonus);
+        const tR = Math.random(); const tF = tR < tP;
+        baseFailChecks.push({ name: `${i+1}段目タンク`, rarity: stages[i].tank.rarity, prob: tP, roll: tR, failed: tF });
+        stageTankFailFrac[i] = tF ? 0.1 + Math.random() * 0.8 : null;
+      }
+      // Interstage separation failures
+      for (let i = 0; i < structures.length; i++) {
+        const sP = G.RARITY[structures[i].rarity].baseFail * (1 - reliabilityBonus);
+        const sR = Math.random(); const sF = sR < sP;
+        const sL = structures.length === 1 ? '段間分離' : `段間${i+1}分離`;
+        baseFailChecks.push({ name: sL, rarity: structures[i].rarity, prob: sP, roll: sR, failed: sF });
+        sepFails[i] = sF;
+      }
+      // Fairing separation failure
+      {
+        const fP = G.RARITY[fairing.rarity].baseFail * (1 - reliabilityBonus);
+        const fR = Math.random(); const fF = fR < fP;
+        baseFailChecks.push({ name: 'フェアリング分離', rarity: fairing.rarity, prob: fP, roll: fR, failed: fF });
+        fairingSepFail = fF;
+      }
+      // OBC (any time, own rarity baseFail, NOT reduced by own bonus)
+      {
+        const oP = obc ? G.RARITY[obc.rarity].baseFail : 0;
+        const oR = Math.random(); const oF = oR < oP;
+        baseFailChecks.push({ name: 'OBC', rarity: obc ? obc.rarity : 1, prob: oP, roll: oR, failed: oF });
+        obcFailTime = oF ? Math.random() * 600 : null;
       }
     }
 
@@ -135,7 +152,7 @@ G.Physics = {
       const q = 0.5 * rho * relV * relV;
 
       const currentFairingCd = fairingJettisoned ? fairing.dragCoefficient * 0.15 : fairing.dragCoefficient;
-      const dragForce = q * currentFairingCd * fairing.referenceArea;
+      const dragForce = hasAero ? q * currentFairingCd * fairing.referenceArea : 0;
 
       const r = P.R_EARTH + alt;
       const gLocal = P.MU / (r * r);
@@ -148,6 +165,11 @@ G.Physics = {
         if (stagingState === 'meco_coast') {
           stagingTimer += dt;
           if (stagingTimer >= MECO_COAST) {
+            if (currentStage < sepFails.length && sepFails[currentStage]) {
+              failed = true;
+              failReason = structures.length === 1 ? '段間分離失敗' : `段間${currentStage+1}分離失敗`;
+              failPart = 'structure'; failTime = t; break;
+            }
             mass -= sd.dryMass;
             stagingEvents.push({ time: t, type: 'separation', stage: currentStage, alt: alt });
             stagingState = 'sep_coast';
@@ -233,8 +255,8 @@ G.Physics = {
         const MOI = mass * rocketLen * rocketLen / 12;
         const tvcTorque = thrustForce * Math.sin(gimbalAngle) * rocketLen * 0.4;
         const alphaAoA6 = v > 10 ? theta - Math.atan2(vr, vt) : 0;
-        const aeroRestoring = -q * fairing.referenceArea * Cn_alpha6 * staticMarginFrac6 * rocketLen * alphaAoA6;
-        const aeroDamping = -dampCoeff6 * q * fairing.referenceArea * rocketLen * rocketLen * omega / (2 * Math.max(v, 1));
+        const aeroRestoring = hasAero ? -q * fairing.referenceArea * Cn_alpha6 * staticMarginFrac6 * rocketLen * alphaAoA6 : 0;
+        const aeroDamping = hasAero ? -dampCoeff6 * q * fairing.referenceArea * rocketLen * rocketLen * omega / (2 * Math.max(v, 1)) : 0;
         const omegaDot = (tvcTorque + aeroRestoring + aeroDamping) / MOI;
         omega += omegaDot * dt;
         theta += omega * dt;
@@ -248,13 +270,21 @@ G.Physics = {
         break;
       }
 
-      // Base failure check (pre-rolled)
-      if (scheduledFail && t >= scheduledFail.time) {
-        failed = true;
-        failReason = scheduledFail.reason;
-        failPart = scheduledFail.part;
-        failTime = t;
-        break;
+      // Phase-dependent failure checks
+      if (obcFailTime !== null && t >= obcFailTime) {
+        failed = true; failReason = 'OBC故障'; failPart = 'obc'; failTime = t;
+        obcFailTime = null; break;
+      }
+      if (isBurning && currentStage < stageCount) {
+        const fuelFrac = 1 - stageData[currentStage].fuelLeft / stageInitialFuel[currentStage];
+        if (stageEngineFailFrac[currentStage] !== null && fuelFrac >= stageEngineFailFrac[currentStage]) {
+          failed = true; failReason = `${currentStage+1}段目エンジン故障`; failPart = 'engine'; failTime = t;
+          stageEngineFailFrac[currentStage] = null; break;
+        }
+        if (stageTankFailFrac[currentStage] !== null && fuelFrac >= stageTankFailFrac[currentStage]) {
+          failed = true; failReason = `${currentStage+1}段目タンク故障`; failPart = 'tank'; failTime = t;
+          stageTankFailFrac[currentStage] = null; break;
+        }
       }
 
       const accelG = Math.sqrt(ar * ar + at * at) / P.g0;
@@ -266,6 +296,9 @@ G.Physics = {
       if (qAlpha > maxQAlpha) maxQAlpha = qAlpha;
 
       if (!fairingJettisoned && alt > 80000) {
+        if (fairingSepFail) {
+          failed = true; failReason = 'フェアリング分離失敗'; failPart = 'fairing'; failTime = t; break;
+        }
         fairingJettisoned = true;
         mass -= fairing.dryMass * 0.7;
         stagingEvents.push({ time: t, type: 'fairing', alt: alt });
