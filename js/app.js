@@ -150,7 +150,10 @@ G.App = {
     canvas.height = rect.height;
     const W = canvas.width, H = canvas.height;
     const P = G.PHYSICS, R = P.R_EARTH, MU = P.MU;
-    const rW2 = 10, rH2 = 26;
+    // Rocket size based on stage count (proportion to 85-unit mast: 50%/70%/90%)
+    const sc_ = simResult.stageCount;
+    const rH2 = [0, 50, 70, 90][sc_];
+    const rW2 = [0, 10, 13, 15][sc_];
 
     const data = simResult.flightData;
     if (!data.length) { this._showResults(simResult, rocketParts, site, targetAlt, targetInc); return; }
@@ -228,7 +231,7 @@ G.App = {
     };
 
     // Draw launch pad structures at screen position
-    const drawPadStructures = (sx, sy, sc, showArm) => {
+    const drawPadStructures = (sx, sy, sc, showArm, armH) => {
       if (sc < 0.03) return;
       // Concrete pad
       ctx.fillStyle = '#444'; ctx.fillRect(sx-45*sc, sy, 90*sc, 6*sc);
@@ -254,9 +257,9 @@ G.App = {
         ctx.strokeStyle = '#888'; ctx.lineWidth = Math.max(0.5, sc*0.4);
         ctx.beginPath(); ctx.moveTo(tx+tw/2, sy-th-5*sc); ctx.lineTo(tx+tw/2, sy-th-22*sc); ctx.stroke();
       }
-      // Service arm + umbilical (only pre-launch)
+      // Service arm + umbilical (only pre-launch, position based on rocket height)
       if (showArm && sc > 0.2) {
-        const armY = sy-18*sc;
+        const armY = sy - (armH || 18*sc);
         ctx.fillStyle = '#777'; ctx.fillRect(sx+4*sc, armY, (tx-sx-2*sc), 3*sc);
         ctx.strokeStyle = '#aa7733'; ctx.lineWidth = Math.max(0.5, sc);
         ctx.beginPath(); ctx.moveTo(sx+3*sc, armY+3*sc);
@@ -393,8 +396,10 @@ G.App = {
       // Launch pad structures (at world 0,0)
       const padScr = toScr(0, 0);
       const padScale = Math.min(1.2, zoom * 60);
+      const rocketH = rH2 * 5/6; // visible rocket height (nose to bottom)
+      const armH = rocketH * 0.55 * padScale; // arm at ~55% of rocket height
       if (padScr.y > -100 && padScr.y < H+100) {
-        drawPadStructures(padScr.x, padScr.y, padScale, phase === 'pad');
+        drawPadStructures(padScr.x, padScr.y, padScale, phase === 'pad', armH);
       }
 
       // Trail
@@ -415,9 +420,13 @@ G.App = {
         ctx.globalAlpha = 1; ctx.restore();
       }
 
-      // Rocket
+      // Rocket (scaled for pad scene, fixed for flight)
       const rp = toScr(rw.x, rw.y);
-      ctx.save(); ctx.translate(rp.x, rp.y); ctx.rotate(Math.PI/2 - fpaRad);
+      const isPad = (phase === 'pad' || phase === 'ignition');
+      const rScale = isPad ? padScale : 1;
+      const rYOff = isPad ? rH2/3 * rScale : 0; // offset so bottom sits on pad
+      ctx.save(); ctx.translate(rp.x, rp.y - rYOff); ctx.rotate(Math.PI/2 - fpaRad);
+      ctx.scale(rScale, rScale);
       ctx.fillStyle = '#e0e0e0'; ctx.beginPath();
       ctx.moveTo(0,-rH2/2); ctx.lineTo(-rW2/3,-rH2/4); ctx.lineTo(-rW2/3,rH2/3); ctx.lineTo(rW2/3,rH2/3); ctx.lineTo(rW2/3,-rH2/4); ctx.closePath(); ctx.fill();
       ctx.fillStyle = '#aaa'; ctx.beginPath(); ctx.moveTo(0,-rH2/2); ctx.lineTo(-rW2/2.5,-rH2/5); ctx.lineTo(rW2/2.5,-rH2/5); ctx.closePath(); ctx.fill();
