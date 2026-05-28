@@ -327,8 +327,8 @@ G.App = {
       } else if (phase === 'explosion') {
         d = data[data.length - 1];
         rw = explosionCenter || toWorld(0, 0);
-        fpaRad = (d.fpa || 90) * Math.PI / 180;
-        bodyRad = ((d.bodyAngle ?? d.fpa) || 90) * Math.PI / 180;
+        fpaRad = (d.fpa != null ? d.fpa : 90) * Math.PI / 180;
+        bodyRad = (d.bodyAngle != null ? d.bodyAngle : (d.fpa != null ? d.fpa : 90)) * Math.PI / 180;
         flameFactor = 0;
         const elapsedExp = (now - explosionStart) / 1000;
         for (const ep of explosionParticles) {
@@ -345,8 +345,8 @@ G.App = {
         if (simTimeCursor > maxSimTime) simTimeCursor = maxSimTime;
         d = interpData(simTimeCursor);
         rw = toWorld(d.downrange, d.alt);
-        fpaRad = (d.fpa || 90) * Math.PI / 180;
-        bodyRad = ((d.bodyAngle ?? d.fpa) || 90) * Math.PI / 180;
+        fpaRad = (d.fpa != null ? d.fpa : 90) * Math.PI / 180;
+        bodyRad = (d.bodyAngle != null ? d.bodyAngle : (d.fpa != null ? d.fpa : 90)) * Math.PI / 180;
         flameFactor = 1;
 
         if (simTimeCursor >= maxSimTime) {
