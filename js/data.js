@@ -16,7 +16,8 @@ G.CATEGORIES = ['engine', 'tank', 'structure', 'fairing', 'payload', 'obc'];
 G.PARTS = {
   engine: [
     { id: 'e1a', name: 'KR-1 ベーシック', rarity: 1, vacuumThrust: 55, seaLevelThrust: 42, isp: 245, massFlowRate: 22.9, dryMass: 220, maxBurnTime: 180, maxAccel: 8 },
-    { id: 'e1b', name: 'KR-1S スラスター', rarity: 1, vacuumThrust: 40, seaLevelThrust: 30, isp: 265, massFlowRate: 15.4, dryMass: 180, maxBurnTime: 240, maxAccel: 6 },
+    { id: 'e1b', name: 'KR-1S スラスター', rarity: 1, vacuumThrust: 30, seaLevelThrust: 22, isp: 265, massFlowRate: 11.6, dryMass: 135, maxBurnTime: 240, maxAccel: 6 },
+    { id: 'e1c', name: 'KR-1M マイクロ', rarity: 1, vacuumThrust: 10, seaLevelThrust: 7, isp: 280, massFlowRate: 3.6, dryMass: 45, maxBurnTime: 300, maxAccel: 5 },
     { id: 'e2a', name: 'MV-20 ブースト', rarity: 2, vacuumThrust: 90, seaLevelThrust: 72, isp: 275, massFlowRate: 33.4, dryMass: 190, maxBurnTime: 200, maxAccel: 10 },
     { id: 'e2b', name: 'MV-20E エコノミー', rarity: 2, vacuumThrust: 65, seaLevelThrust: 50, isp: 295, massFlowRate: 22.5, dryMass: 160, maxBurnTime: 280, maxAccel: 8 },
     { id: 'e3a', name: 'HX-300 パワー', rarity: 3, vacuumThrust: 135, seaLevelThrust: 110, isp: 305, massFlowRate: 45.2, dryMass: 155, maxBurnTime: 220, maxAccel: 12 },
@@ -24,7 +25,7 @@ G.PARTS = {
     { id: 'e4a', name: 'RG-X リジェネ', rarity: 4, vacuumThrust: 195, seaLevelThrust: 170, isp: 330, massFlowRate: 60.3, dryMass: 125, maxBurnTime: 260, maxAccel: 15 },
     { id: 'e4b', name: 'RG-X ハイIsp', rarity: 4, vacuumThrust: 150, seaLevelThrust: 120, isp: 355, massFlowRate: 43.1, dryMass: 100, maxBurnTime: 350, maxAccel: 12 },
     { id: 'e5a', name: 'NOVA-9 ラプター', rarity: 5, vacuumThrust: 270, seaLevelThrust: 240, isp: 355, massFlowRate: 77.6, dryMass: 85, maxBurnTime: 300, maxAccel: 20 },
-    { id: 'e5b', name: 'NOVA-9V イオン', rarity: 5, vacuumThrust: 200, seaLevelThrust: 150, isp: 380, massFlowRate: 53.7, dryMass: 65, maxBurnTime: 400, maxAccel: 15 },
+    { id: 'e5b', name: 'NOVA-9V エキスパンダー', rarity: 5, vacuumThrust: 200, seaLevelThrust: 150, isp: 380, massFlowRate: 53.7, dryMass: 65, maxBurnTime: 400, maxAccel: 15 },
   ],
   tank: [
     { id: 't1a', name: 'FT-S 標準タンク', rarity: 1, propellantCapacity: 2200, dryMass: 320, propellantType: 'RP-1/LOX', maxQAlpha: 30000, maxAxialAccel: 8 },
@@ -39,11 +40,11 @@ G.PARTS = {
     { id: 't5b', name: 'FT-Z LH2フェザー', rarity: 5, propellantCapacity: 6500, dryMass: 280, propellantType: 'LH2/LOX', maxQAlpha: 85000, maxAxialAccel: 18 },
   ],
   structure: [
-    { id: 's1', name: 'IS-1 鉄骨フレーム', rarity: 1, dryMass: 110, connectionStrength: 100, maxQAlpha: 25000, maxAxialAccel: 7 },
-    { id: 's2', name: 'IS-2 アルミフレーム', rarity: 2, dryMass: 85, connectionStrength: 150, maxQAlpha: 35000, maxAxialAccel: 9 },
-    { id: 's3', name: 'IS-3 合金フレーム', rarity: 3, dryMass: 62, connectionStrength: 220, maxQAlpha: 50000, maxAxialAccel: 12 },
-    { id: 's4', name: 'IS-4 CFRP フレーム', rarity: 4, dryMass: 42, connectionStrength: 300, maxQAlpha: 70000, maxAxialAccel: 16 },
-    { id: 's5', name: 'IS-5 ナノカーボン', rarity: 5, dryMass: 22, connectionStrength: 450, maxQAlpha: 95000, maxAxialAccel: 22 },
+    { id: 's1', name: 'IS-1 鉄骨フレーム', rarity: 1, dryMass: 220, connectionStrength: 100, maxQAlpha: 25000, maxAxialAccel: 7 },
+    { id: 's2', name: 'IS-2 アルミフレーム', rarity: 2, dryMass: 170, connectionStrength: 150, maxQAlpha: 35000, maxAxialAccel: 9 },
+    { id: 's3', name: 'IS-3 合金フレーム', rarity: 3, dryMass: 124, connectionStrength: 220, maxQAlpha: 50000, maxAxialAccel: 12 },
+    { id: 's4', name: 'IS-4 CFRP フレーム', rarity: 4, dryMass: 84, connectionStrength: 300, maxQAlpha: 70000, maxAxialAccel: 16 },
+    { id: 's5', name: 'IS-5 ナノカーボン', rarity: 5, dryMass: 44, connectionStrength: 450, maxQAlpha: 95000, maxAxialAccel: 22 },
   ],
   fairing: [
     { id: 'f1', name: 'NF-1 標準フェアリング', rarity: 1, dryMass: 160, dragCoefficient: 0.50, referenceArea: 2.2, maxDynamicPressure: 25000 },
@@ -60,11 +61,11 @@ G.PARTS = {
     { id: 'p5', name: 'SAT-5 宇宙望遠鏡', rarity: 5, mass: 600, scoreMultiplier: 3.0, maxAccel: 22 },
   ],
   obc: [
-    { id: 'obc1', name: 'FC-1 基本制御', rarity: 1, dryMass: 15, guidanceBonus: 0, reliabilityBonus: 0 },
-    { id: 'obc2', name: 'FC-2 航法制御', rarity: 2, dryMass: 12, guidanceBonus: 0.05, reliabilityBonus: 0.03 },
-    { id: 'obc3', name: 'FC-3 統合制御', rarity: 3, dryMass: 10, guidanceBonus: 0.10, reliabilityBonus: 0.05 },
-    { id: 'obc4', name: 'FC-4 AI制御', rarity: 4, dryMass: 7, guidanceBonus: 0.15, reliabilityBonus: 0.08 },
-    { id: 'obc5', name: 'FC-5 量子制御', rarity: 5, dryMass: 4, guidanceBonus: 0.20, reliabilityBonus: 0.12 },
+    { id: 'obc1', name: 'SA-1 基本アダプタ', rarity: 1, dryMass: 15, guidanceBonus: 0, reliabilityBonus: 0 },
+    { id: 'obc2', name: 'SA-2 航法アダプタ', rarity: 2, dryMass: 12, guidanceBonus: 0.05, reliabilityBonus: 0.03 },
+    { id: 'obc3', name: 'SA-3 統合アダプタ', rarity: 3, dryMass: 10, guidanceBonus: 0.10, reliabilityBonus: 0.05 },
+    { id: 'obc4', name: 'SA-4 AIアダプタ', rarity: 4, dryMass: 7, guidanceBonus: 0.15, reliabilityBonus: 0.08 },
+    { id: 'obc5', name: 'SA-5 量子アダプタ', rarity: 5, dryMass: 4, guidanceBonus: 0.20, reliabilityBonus: 0.12 },
   ],
 };
 
@@ -108,7 +109,7 @@ G.PHYSICS = {
   EARTH_ROTATION: 465.1,
 };
 
-G.DEFAULT_PARTS = ['e1a', 't1a', 'e1b', 't1b', 's1', 'f1', 'p1', 'obc1'];
+G.DEFAULT_PARTS = ['e1a', 't1a', 'e1b', 't1b', 'e1c', 's1', 'f1', 'p1', 'obc1'];
 
 G.DEFAULT_ROCKET = {
   stages: [
@@ -122,8 +123,18 @@ G.DEFAULT_ROCKET = {
   stageCount: 2
 };
 
-G.DEFAULT_INVENTORY = ['e1a', 't1a', 'e1b', 't1b', 's1', 'f1', 'p1', 'obc1'];
+G.DEFAULT_INVENTORY = ['e1a', 't1a', 'e1b', 't1b', 'e1c', 's1', 'f1', 'p1', 'obc1'];
 G.MAX_STAGES = 3;
+
+// Grid dimensions and connection points for each part category
+G.PART_GRID = {
+  engine:    { w: 2, h: 2, connectTop: true,  connectBottom: true,  label: 'エンジン', icon: '🔥' },
+  tank:      { w: 2, h: 3, connectTop: true,  connectBottom: true,  label: 'タンク',   icon: '⛽' },
+  structure: { w: 2, h: 2, connectTop: true,  connectBottom: true,  label: '段間',     icon: '🔗' },
+  fairing:   { w: 2, h: 2, connectTop: false, connectBottom: true,  label: 'フェアリング', icon: '🛡️' },
+  payload:   { w: 2, h: 1, connectTop: true,  connectBottom: true,  label: 'ペイロード', icon: '🛰️' },
+  obc:       { w: 2, h: 1, connectTop: true,  connectBottom: true,  label: '衛星アダプタ', icon: '🔌' },
+};
 
 G.GACHA_PITY = 100;
 G.GACHA_WEEKLY_TICKET_DAYS = 7;

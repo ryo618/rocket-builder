@@ -35,11 +35,18 @@ G.Physics = {
     for (const sd of stageData) totalMass0 += sd.dryMass + sd.fuelLeft;
     const totalFuel0 = stageData.reduce((s, sd) => s + sd.fuelLeft, 0);
 
-    const dt = 0.5;
-    const maxTime = 900;
+    const dt = 0.25;
+    // 高高度目標はアポジまでのコースト時間が長いため上限時間をスケールさせる
+    const maxTime = 1200 + targetAlt * 0.8;
     const targetAltM = targetAlt * 1000;
     const vOrbit = Math.sqrt(P.MU / (P.R_EARTH + targetAltM));
-    const rotBoost = P.EARTH_ROTATION * Math.cos(site.lat * Math.PI / 180);
+    // 自転ブースト: 軌道面への射点速度の投影。直接投入では sin(方位角) = cos(i)/cos(lat)
+    // なので軌道進行方向成分は Ω·R·cos(i)。逆行軌道 (i > 90°, SSO等) ではペナルティになる。
+    let rotBoost = P.EARTH_ROTATION * Math.cos(site.lat * Math.PI / 180);
+    if (site.level >= 2 && typeof targetInc === 'number') {
+      const effInc = Math.max(Math.abs(site.lat), targetInc);
+      rotBoost = P.EARTH_ROTATION * Math.cos(effInc * Math.PI / 180);
+    }
 
     let h = 0;
     let vr = 0;
@@ -47,10 +54,11 @@ G.Physics = {
     let mass = totalMass0;
     let t = 0;
     let pitchAngle = 90;
-    // 6DOF rotational state
+    // 平面3DOF回転状態（並進2自由度 + ピッチ回転1自由度）
     let theta = Math.PI / 2;  // body pitch angle (rad), pi/2 = vertical
     let omega = 0;             // angular velocity (rad/s)
     let gimbalAngle = 0;       // TVC gimbal deflection (rad)
+    let prevDesiredPitch = Math.PI / 2; // guidance rate limiter state
     let fairingJettisoned = false;
     let maxQ = 0;
     let maxAccelG = 0;
@@ -77,18 +85,35 @@ G.Physics = {
     const flightData = [];
     const recordInterval = 2;
     let lastRecord = -recordInterval;
+    let orbitInserted = false;
+    // 終端誘導: 遠地点が目標帯域に達したら投入フェーズへ移行し、
+    // アポジ調整 → コースト → 円形化燃焼で近地点を引き上げる（実機の二段燃焼投入の簡略版）
+    let insertionPhase = false;
+    let circMode = false;
+
+    // 現在の状態ベクトルから軌道要素（近地点・遠地点高度）を計算
+    const orbitElements = () => {
+      const rNow = P.R_EARTH + h;
+      const vSq = vr * vr + vt * vt;
+      const eps = vSq / 2 - P.MU / rNow;
+      if (eps >= 0) return null; // 双曲線軌道（脱出）
+      const a = -P.MU / (2 * eps);
+      const hAng = rNow * vt;
+      const ecc = Math.sqrt(Math.max(0, 1 - hAng * hAng / (P.MU * a)));
+      return { periAlt: a * (1 - ecc) - P.R_EARTH, apoAlt: a * (1 + ecc) - P.R_EARTH };
+    };
 
     const tw0 = stageData[0].gameSLThrust / (totalMass0 * P.g0);
     const twFactor = Math.max(0, Math.min(1, (tw0 - 1.0) / 2.0));
     const kickoverAlt = 2000 + 4000 * (1 - twFactor);
     const pitchEndAlt = Math.min(targetAltM * 0.7, 250000);
-    const tangentC = (1.2 + targetAltM / 500000) * (1 + twFactor * 0.3);
+    const tangentC = (1.0 + targetAltM / 600000) * (1 + twFactor * 0.2);
     const useManualPitch = pitchRate && pitchRate > 0;
 
-    // 6DOF rotational dynamics constants
+    // 平面3DOF回転力学の定数
     const rocketLenBase = 40;
     const gimbalMaxRad = 5 * Math.PI / 180;
-    const Kp_tvc = 3.0;
+    const Kp_tvc = 2.0;
     const Kd_tvc = 1.5;
     const Cn_alpha6 = 2.0;
     const staticMarginFrac6 = 0.08;
@@ -134,8 +159,14 @@ G.Physics = {
       {
         const oP = obc ? G.RARITY[obc.rarity].baseFail : 0;
         const oR = Math.random(); const oF = oR < oP;
-        baseFailChecks.push({ name: 'OBC', rarity: obc ? obc.rarity : 1, prob: oP, roll: oR, failed: oF });
+        baseFailChecks.push({ name: '衛星アダプタ', rarity: obc ? obc.rarity : 1, prob: oP, roll: oR, failed: oF });
         obcFailTime = oF ? Math.random() * 600 : null;
+      }
+      // Payload (satellite) separation failure — checked after orbit achieved
+      {
+        const pP = G.RARITY[payload.rarity].baseFail * (1 - reliabilityBonus);
+        const pR = Math.random(); const pF = pR < pP;
+        baseFailChecks.push({ name: '衛星分離', rarity: payload.rarity, prob: pP, roll: pR, failed: pF });
       }
     }
 
@@ -145,9 +176,9 @@ G.Physics = {
 
       const rho = alt < 100000 ? P.RHO_0 * Math.exp(-alt / P.H_SCALE) : 0;
       const v = Math.sqrt(vr * vr + vt * vt);
-      const atmoVt = rotBoost * Math.max(0, 1 - alt / 100000);
+      // 大気は全高度で地球と共回転する（高度による減衰はない — 密度減衰が実質の減衰）
       const relVr = vr;
-      const relVt = vt - atmoVt;
+      const relVt = vt - rotBoost;
       const relV = Math.sqrt(relVr * relVr + relVt * relVt);
       const q = 0.5 * rho * relV * relV;
 
@@ -170,7 +201,9 @@ G.Physics = {
               failReason = structures.length === 1 ? '段間分離失敗' : `段間${currentStage+1}分離失敗`;
               failPart = 'structure'; failTime = t; break;
             }
+            // 下段と一緒に段間構造も投棄する
             mass -= sd.dryMass;
+            if (currentStage < structures.length) mass -= structures[currentStage].dryMass;
             stagingEvents.push({ time: t, type: 'separation', stage: currentStage, alt: alt });
             stagingState = 'sep_coast';
             stagingTimer = 0;
@@ -184,15 +217,52 @@ G.Physics = {
             stagingTimer = 0;
           }
         } else if (sd.fuelLeft > 0) {
-          const atmoFactor = Math.min(1, alt / 40000);
-          const thrust = sd.gameSLThrust * (1 - atmoFactor) + sd.gameVacThrust * atmoFactor;
-          const fuelUsed = Math.min(sd.gameMassFlow * dt, sd.fuelLeft);
-          sd.fuelLeft -= fuelUsed;
-          mass -= fuelUsed;
-          thrustForce = thrust;
-          isBurning = true;
-          sd.burnTime += dt;
-          totalBurnTime += dt;
+          // 推力 T = T_vac − p_a·A_e: 気圧は指数減衰するので線形ではなく圧力比で補間
+          const pFrac = Math.exp(-alt / P.H_SCALE);
+          const maxThrust = sd.gameVacThrust - (sd.gameVacThrust - sd.gameSLThrust) * pFrac;
+
+          const oeNow = orbitElements();
+          if (!insertionPhase && oeNow && oeNow.apoAlt >= targetAltM - Math.max(altToleranceM, 30000)) {
+            insertionPhase = true;
+          }
+          let throttle = 1;
+          circMode = false;
+          if (insertionPhase && oeNow) {
+            const accelNow = maxThrust / mass;
+            const periGap = (targetAltM - altToleranceM * 0.5) - oeNow.periAlt;
+            const apoErr = targetAltM - oeNow.apoAlt;
+            // アポジ近傍の判定は許容幅に依存させない（早すぎる円形化はアポジを押し上げてしまう）
+            const nearApo = (oeNow.apoAlt - alt) < 20000 || vr < 50;
+            if (periGap <= 0) {
+              throttle = 0; // 近地点が帯域内 → 投入完了（successチェックが拾う）
+            } else if (!nearApo) {
+              // (1) アポジ調整: 遠地点を目標のやや下に載せ、載ったらコーストで上昇
+              //     （円形化燃焼でアポジは少し上がるため下側に余裕を残す。
+              //       dApo/dv ≈ 2km per m/s @LEO なのでギャップに応じて絞る）
+              const apoAim = apoErr - altToleranceM * 0.25;
+              throttle = apoAim <= 0 ? 0
+                : Math.min(1, Math.max(0.02, apoAim / 2000 / (accelNow * dt)));
+            } else {
+              // (2) 円形化: アポジ近傍で高度を保ちつつ水平加速して近地点を引き上げる。
+              //     残りギャップに応じて絞り、遠地点が帯域上限に近づいたらさらに絞る
+              circMode = true;
+              const apoMargin = (targetAltM + altToleranceM * 0.5) - oeNow.apoAlt;
+              const periThr = periGap / 3500 / (accelNow * dt) / 4;
+              const apoCap = apoMargin > 0
+                ? Math.max(0.08, apoMargin / 1000 / (accelNow * dt))
+                : 0.08;
+              throttle = Math.min(1, Math.max(0.02, Math.min(periThr, apoCap)));
+            }
+          }
+          if (throttle > 0) {
+            const fuelUsed = Math.min(sd.gameMassFlow * dt * throttle, sd.fuelLeft);
+            sd.fuelLeft -= fuelUsed;
+            mass -= fuelUsed;
+            thrustForce = maxThrust * throttle;
+            isBurning = true;
+            sd.burnTime += dt * throttle;
+            totalBurnTime += dt * throttle;
+          }
         } else if (currentStage < stageCount - 1) {
           stagingEvents.push({ time: t, type: 'meco', stage: currentStage, alt: alt });
           stagingState = 'meco_coast';
@@ -200,7 +270,7 @@ G.Physics = {
         }
       }
 
-      // 6DOF guidance: compute desired pitch angle
+      // 誘導則: 目標ピッチ角を計算
       let desiredPitchRad = theta;
       if (useManualPitch) {
         if (alt > kickoverAlt) {
@@ -217,14 +287,61 @@ G.Physics = {
             const schedulePitchRad = Math.atan(tangentC * (1 - altFracP));
             const maxAoARad = (alt < 30000 ? 3 : 20) * Math.PI / 180;
             const targetPitchRad = Math.max(relFpa, Math.min(schedulePitchRad, relFpa + maxAoARad));
-            desiredPitchRad = Math.min(theta, Math.max(0, targetPitchRad));
+            desiredPitchRad = Math.max(0, targetPitchRad);
           } else {
+            // Upper stage: velocity-aware guidance for optimal orbit insertion
+            const vtRatio = Math.min(1, vt / vOrbit);
             const altFrac = Math.min(1, alt / targetAltM);
-            const schedPitchRad = Math.max(0, 25 * (1 - altFrac * 1.3)) * Math.PI / 180;
-            const maxAoARad = (alt > 80000 ? 25 : 10) * Math.PI / 180;
+            // Altitude component: pitch up if below target, zero at/above target
+            const altPitchDeg = Math.max(0, (1 - altFrac)) * 20;
+            // Velocity component: as vt approaches vOrbit, pitch toward horizontal
+            const velPitchDeg = (1 - vtRatio * vtRatio) * 15;
+            // Combine: altitude need dominates when far below target, velocity need takes over near orbit
+            const schedPitchDeg = Math.min(30, altPitchDeg * (1 - vtRatio) + velPitchDeg);
+            const schedPitchRad = schedPitchDeg * Math.PI / 180;
+            const maxAoARad = (alt > 80000 ? 20 : 10) * Math.PI / 180;
             desiredPitchRad = Math.max(0, Math.min(schedPitchRad, relFpa + maxAoARad));
           }
         }
+        // 投入フェーズの燃焼方向: アポジ調整中はプログレード（エネルギー効率最良）、
+        // 円形化中は高度維持ピッチ（重力と遠心力の差を推力の垂直成分で相殺しつつ水平加速）
+        if (insertionPhase && relV > 10 && isBurning) {
+          if (circMode && thrustForce > 0) {
+            const needAr = (gLocal - vt * vt / r) - 0.3 * vr;
+            const sinP = Math.max(-0.35, Math.min(0.7, needAr / (thrustForce / mass)));
+            desiredPitchRad = Math.asin(sinP);
+          } else {
+            desiredPitchRad = Math.max(0, Math.atan2(vr, vt));
+          }
+        }
+      }
+
+      // Adaptive guidance rate limit — tuned per flight phase for optimal trajectory
+      {
+        let maxPitchRateDeg;
+        if (alt < 10000) {
+          // Low altitude / high-Q: very gentle kickover, minimize AoA loads
+          maxPitchRateDeg = 0.8;
+        } else if (alt < 50000) {
+          // Mid atmosphere: follow gravity turn — ramp rate as Q drops
+          const frac = (alt - 10000) / 40000;
+          maxPitchRateDeg = 0.8 + frac * 1.2;
+        } else if (alt < 80000) {
+          // Upper atmosphere transition
+          maxPitchRateDeg = 2.0;
+        } else {
+          // Vacuum: pitch for efficient orbit insertion
+          maxPitchRateDeg = 3.5;
+        }
+        const maxDelta = maxPitchRateDeg * Math.PI / 180 * dt;
+        if (desiredPitchRad < prevDesiredPitch - maxDelta) {
+          desiredPitchRad = prevDesiredPitch - maxDelta;
+        } else if (desiredPitchRad > prevDesiredPitch + maxDelta) {
+          desiredPitchRad = prevDesiredPitch + maxDelta;
+        }
+        prevDesiredPitch = desiredPitchRad;
+        // During coast (no TVC), track actual theta to avoid jump at re-ignition
+        if (!isBurning) prevDesiredPitch = theta;
       }
 
       // TVC attitude controller (PD)
@@ -233,7 +350,7 @@ G.Physics = {
       gimbalAngle = Math.max(-gimbalMaxRad, Math.min(gimbalMaxRad, gimbalAngle));
       if (!isBurning) gimbalAngle = 0;
 
-      // 6DOF thrust direction = body axis + gimbal
+      // 推力方向 = 機体軸 + ジンバル
       const thrustDir = theta + gimbalAngle;
       const thrustR = thrustForce * Math.sin(thrustDir) / mass;
       const thrustT = thrustForce * Math.cos(thrustDir) / mass;
@@ -249,7 +366,7 @@ G.Physics = {
       h += vr * dt;
       downrange += ((vt * P.R_EARTH / r - rotBoost) * dt);
 
-      // 6DOF angular dynamics
+      // ピッチ回転力学
       {
         const rocketLen = rocketLenBase * Math.pow(mass / totalMass0, 0.3);
         const MOI = mass * rocketLen * rocketLen / 12;
@@ -265,14 +382,19 @@ G.Physics = {
         pitchAngle = theta * 180 / Math.PI;
       }
 
-      if (h < 0 && t > 10) {
+      // Ground collision: rocket cannot go below h=0
+      if (h < 0) {
         h = 0;
-        break;
+        vr = Math.max(0, vr);
+        // If rocket was in flight and came back down, end simulation
+        if (peakAltitude > 100 && t > 10) {
+          break;
+        }
       }
 
       // Phase-dependent failure checks
       if (obcFailTime !== null && t >= obcFailTime) {
-        failed = true; failReason = 'OBC故障'; failPart = 'obc'; failTime = t;
+        failed = true; failReason = '衛星アダプタOBC故障'; failPart = 'obc'; failTime = t;
         obcFailTime = null; break;
       }
       if (isBurning && currentStage < stageCount) {
@@ -287,7 +409,8 @@ G.Physics = {
         }
       }
 
-      const accelG = Math.sqrt(ar * ar + at * at) / P.g0;
+      // 構造荷重 = プロパー加速度（推力+空力の比力）。重力・遠心項は自由落下なので荷重にならない
+      const accelG = Math.sqrt((thrustR + dragR) * (thrustR + dragR) + (thrustT + dragT) * (thrustT + dragT)) / P.g0;
       const alpha = v > 0 ? Math.abs(theta - Math.atan2(vr, vt)) : 0;
       const qAlpha = q * alpha;
 
@@ -300,7 +423,7 @@ G.Physics = {
           failed = true; failReason = 'フェアリング分離失敗'; failPart = 'fairing'; failTime = t; break;
         }
         fairingJettisoned = true;
-        mass -= fairing.dryMass * 0.7;
+        mass -= fairing.dryMass;
         stagingEvents.push({ time: t, type: 'fairing', alt: alt });
       }
 
@@ -308,8 +431,8 @@ G.Physics = {
         const sd = stageData[currentStage];
         const checks = [
           { part: 'fairing', limit: fairing.maxDynamicPressure, actual: q, name: 'フェアリング動圧超過' },
-          { part: 'tank', limit: sd.tank.maxQAlpha * P.g0, actual: qAlpha * P.g0, name: 'タンクQα超過' },
-          { part: 'structure', limit: (structures.length > 0 ? Math.min(...structures.map(s => s.maxQAlpha)) : 50000) * P.g0, actual: qAlpha * P.g0, name: '構造材Qα超過' },
+          { part: 'tank', limit: sd.tank.maxQAlpha, actual: qAlpha, name: 'タンクQα超過' },
+          { part: 'structure', limit: structures.length > 0 ? Math.min(...structures.map(s => s.maxQAlpha)) : 50000, actual: qAlpha, name: '構造材Qα超過' },
           { part: 'tank', limit: sd.tank.maxAxialAccel, actual: accelG, name: 'タンク加速度超過' },
           { part: 'engine', limit: sd.engine.maxAccel, actual: accelG, name: 'エンジン加速度超過' },
           { part: 'payload', limit: payload.maxAccel, actual: accelG, name: 'ペイロード加速度超過' },
@@ -392,9 +515,15 @@ G.Physics = {
         }
       }
 
-      // Success: near target altitude with orbital velocity
-      if (alt > targetAltM * 0.8 && vt >= vOrbit * 0.95) {
-        break;
+      // 成功判定: 近地点・遠地点がともに目標帯域内 = 真の軌道投入
+      // （速度だけの判定では近地点が大気圏内の弾道飛行でも成功になってしまう。
+      //   peri ≤ 高度 ≤ apo なので、この条件は現在高度が帯域内であることも含意する）
+      {
+        const oe = orbitElements();
+        if (oe && oe.periAlt >= targetAltM - altToleranceM && oe.apoAlt <= targetAltM + altToleranceM) {
+          orbitInserted = true;
+          break;
+        }
       }
 
       t += dt;
@@ -403,24 +532,35 @@ G.Physics = {
     const peakAltKm = peakAltitude / 1000;
     const finalAlt = h / 1000;
     const finalV = Math.sqrt(vr * vr + vt * vt);
-    const displayAlt = Math.max(finalAlt, peakAltKm);
-    const tolKm = site.altTolerance || 100;
-    const achievedOrbit = !failed
-      && displayAlt >= targetAlt - tolKm
-      && displayAlt <= targetAlt + tolKm
-      && finalV >= vOrbit * 0.85;
+    const displayAlt = orbitInserted ? finalAlt : Math.max(finalAlt, peakAltKm);
+    const finalOE = orbitElements();
+    let achievedOrbit = !failed && orbitInserted;
+
+    // Payload separation failure — only applies if orbit was achieved
+    const payloadFailCheck = baseFailChecks.find(c => c.name === '衛星分離');
+    if (achievedOrbit && payloadFailCheck && payloadFailCheck.failed) {
+      failed = true;
+      failReason = '衛星分離失敗';
+      failPart = 'payload';
+      failTime = t;
+      achievedOrbit = false;
+    }
 
     let totalDryMass = fixedMass;
     for (const sd of stageData) totalDryMass += sd.dryMass;
 
+    // 理想ΔV: 段間構造 i は下段 i と一緒に投棄されるので、その段の乾燥質量側に含める
+    const coreFixed = fairing.dryMass + payload.mass + (obc ? obc.dryMass : 0);
     let gameDeltaV = 0;
     for (let i = stageCount - 1; i >= 0; i--) {
-      let upperMass = fixedMass;
+      let upperMass = coreFixed;
       for (let j = i + 1; j < stageCount; j++) {
         upperMass += stageData[j].dryMass + stages[j].tank.propellantCapacity;
+        if (j < structures.length) upperMass += structures[j].dryMass;
       }
-      const stageWet = upperMass + stageData[i].dryMass + stages[i].tank.propellantCapacity;
-      const stageDry = upperMass + stageData[i].dryMass;
+      const stageOwnDry = stageData[i].dryMass + (i < structures.length ? structures[i].dryMass : 0);
+      const stageWet = upperMass + stageOwnDry + stages[i].tank.propellantCapacity;
+      const stageDry = upperMass + stageOwnDry;
       gameDeltaV += Math.round(stages[i].engine.isp * this.GAME_ISP_SCALE * P.g0 * Math.log(stageWet / stageDry));
     }
 
@@ -439,6 +579,8 @@ G.Physics = {
       peakAltitude: Math.round(peakAltKm * 10) / 10,
       finalVelocity: Math.round(finalV),
       orbitalVelocity: Math.round(vOrbit),
+      perigee: finalOE ? Math.round(finalOE.periAlt / 100) / 10 : null,
+      apogee: finalOE ? Math.round(finalOE.apoAlt / 100) / 10 : null,
       maxQ: Math.round(maxQ),
       maxAccelG: Math.round(maxAccelG * 100) / 100,
       maxQAlpha: Math.round(maxQAlpha),

@@ -11,6 +11,7 @@ G.State = {
       tickets: 0,
       loginStreak: 0,
       lastLoginDate: null,
+      dailyGachaUsed: false,
       totalGachaPulls: 0,
       pityCounter: 0,
       inventory: [...G.DEFAULT_INVENTORY],
@@ -25,6 +26,7 @@ G.State = {
       successfulLaunches: 0,
       unlockedSites: ['lv1'],
       flights: [],
+      workspaceLayout: null,
       createdAt: Date.now(),
     };
   },
@@ -98,8 +100,6 @@ G.State = {
       yesterday.setDate(yesterday.getDate() - 1);
       if (last === yesterday.toDateString()) {
         this._data.loginStreak++;
-      } else if (last !== null) {
-        this._data.loginStreak = 1;
       } else {
         this._data.loginStreak = 1;
       }
@@ -145,32 +145,15 @@ G.State = {
     return this._data.rocket;
   },
 
-  setRocketPart(category, partId, stageIdx) {
-    if (stageIdx !== undefined && (category === 'engine' || category === 'tank')) {
-      this._data.rocket.stages[stageIdx][category] = partId;
-    } else if (category === 'structure' && stageIdx !== undefined) {
-      this._data.rocket.structures[stageIdx] = partId;
-    } else {
-      this._data.rocket[category] = partId;
-    }
-    this.save();
-  },
-
-  setStageCount(count) {
-    const c = Math.max(1, Math.min(G.MAX_STAGES, count));
-    while (this._data.rocket.stages.length < c) {
-      this._data.rocket.stages.push({ engine: 'e1a', tank: 't1a' });
-    }
-    const needStructs = Math.max(0, c - 1);
-    if (!this._data.rocket.structures) this._data.rocket.structures = [];
-    while (this._data.rocket.structures.length < needStructs) {
-      this._data.rocket.structures.push('s1');
-    }
-    this._data.rocket.stageCount = c;
+  // ガレージで「設計完了」した承認済み設計をID形式で保存する
+  setApprovedRocket(rocketIds) {
+    this._data.rocket = rocketIds;
     this.save();
   },
 
   getRocketParts() {
+    // 常に承認済み設計（_data.rocket）から構築する。
+    // ガレージの編集途中レイアウトは「設計完了」を押すまで打ち上げに使わない
     const r = this._data.rocket;
     const sc = r.stageCount;
     const structCount = Math.max(0, sc - 1);

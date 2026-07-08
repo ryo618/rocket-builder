@@ -4,8 +4,9 @@
     {
       "name": "rocket-game",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["http-server", "/Users/ryosugiura/Desktop/tool/rocket_game", "-p", "8080", "-c-1"],
-      "port": 8080
+      "runtimeArgs": ["http-server", "/Users/ryosugiura/Desktop/tool/rocket_game", "-c-1"],
+      "port": 8080,
+      "autoPort": true
     }
   ]
 }

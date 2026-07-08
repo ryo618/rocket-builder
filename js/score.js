@@ -24,18 +24,20 @@ G.Score = {
 
     const baseScore = (payloadMass * deltaV) / 1000;
 
+    // 帯域は整数境界（199/200, 500/501）なので丸めてから照合し、小数高度の取りこぼしを防ぐ
+    const bandAlt = Math.round(achievedAlt);
     let orbitMult = 0.1;
     for (const orb of G.ORBIT_TYPES) {
-      if (achievedAlt >= orb.minAlt && achievedAlt <= orb.maxAlt) {
+      if (bandAlt >= orb.minAlt && bandAlt <= orb.maxAlt) {
         orbitMult = orb.multiplier;
         break;
       }
     }
-    if (targetOrbitType === 'sso' && achievedAlt >= 600 && achievedAlt <= 800) {
+    if (targetOrbitType === 'sso' && bandAlt >= 600 && bandAlt <= 800) {
       orbitMult = Math.max(orbitMult, 2.0);
     }
-    if (targetOrbitType === 'gto' && achievedAlt >= 250) {
-      orbitMult = Math.max(orbitMult, 3.0 * Math.min(1, achievedAlt / 35786));
+    if (targetOrbitType === 'gto' && bandAlt >= 250) {
+      orbitMult = Math.max(orbitMult, 3.0 * Math.min(1, bandAlt / 35786));
     }
 
     let incMult = 1.0;
@@ -46,7 +48,9 @@ G.Score = {
 
     const siteMult = site.multiplier;
 
-    let successBonus = 0;
+    // 部分成功（故障なし・軌道未達）は0.25。0にすると総合点が0になり、
+    // 明示的な失敗（弾道スコアあり）より低くなる逆転が起きる
+    let successBonus = 0.25;
     if (simResult.success) {
       const altError = Math.abs(achievedAlt - targetAlt) / targetAlt;
       if (altError < 0.05) {

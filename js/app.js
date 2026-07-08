@@ -4,6 +4,7 @@ window.G = G;
 G.App = {
   currentScreen: 'home',
   launchAnimFrame: null,
+  _animToken: 0,
 
   init() {
     G.State.init();
@@ -11,12 +12,30 @@ G.App = {
     this._updateNav();
   },
 
+  // 打ち上げアニメーションを無効化する（画面遷移時の孤児ループ・結果二重表示を防ぐ）
+  _cancelLaunchAnim() {
+    this._animToken++;
+    if (this.launchAnimFrame) {
+      cancelAnimationFrame(this.launchAnimFrame);
+      this.launchAnimFrame = null;
+    }
+  },
+
   navigate(screen) {
+    this._cancelLaunchAnim();
+    // ガレージを離れる時も、ガレージ内で再タップされた時も一旦破棄する
+    // （destroyせずにinitし直すとdocumentレベルのリスナーが解除不能なまま蓄積する）
+    if (this.currentScreen === 'garage') {
+      G.Garage.destroy();
+    }
     this.currentScreen = screen;
     const main = document.getElementById('main');
     switch (screen) {
       case 'home': main.innerHTML = G.Screens.renderHome(); break;
-      case 'garage': main.innerHTML = G.Screens.renderGarage(); break;
+      case 'garage':
+        main.innerHTML = G.Screens.renderGarage();
+        G.Garage.init(document.getElementById('garage-container'));
+        break;
       case 'launch': main.innerHTML = G.Screens.renderLaunch(); break;
       case 'records': main.innerHTML = G.Screens.renderRecords(); break;
       case 'collection':
@@ -36,8 +55,9 @@ G.App = {
 
   showGacha() {
     if (!G.State.canDailyGacha()) return;
-    G.State.useDailyGacha();
+    // 抽選が成功してから消費する（先に消費すると例外時にガチャ権だけ失われる）
     const result = G.Gacha.pull();
+    G.State.useDailyGacha();
     this._showGachaAnimation(result);
   },
 
@@ -76,31 +96,6 @@ G.App = {
   closeGachaResult() {
     document.getElementById('gacha-result')?.remove();
     this.navigate('home');
-  },
-
-  openPartSelect(category, stageIdx) {
-    const modal = document.createElement('div');
-    modal.id = 'part-modal';
-    modal.innerHTML = G.Screens.renderPartSelectModal(category, stageIdx);
-    document.body.appendChild(modal);
-    requestAnimationFrame(() => {
-      modal.querySelector('.modal-content')?.classList.add('show');
-    });
-  },
-
-  closeModal() {
-    document.getElementById('part-modal')?.remove();
-  },
-
-  selectPart(partId, category, stageIdx) {
-    G.State.setRocketPart(category, partId, stageIdx);
-    this.closeModal();
-    this.navigate('garage');
-  },
-
-  setStageCount(count) {
-    G.State.setStageCount(count);
-    this.navigate('garage');
   },
 
   selectSite(siteId) {
@@ -156,27 +151,58 @@ G.App = {
   _playLaunchAnimation(simResult, rocketParts, site, targetAlt, targetInc) {
     const canvas = document.getElementById('launch-canvas');
     if (!canvas) return;
+    // このアニメーション実行を識別するトークン。navigate等で_animTokenが進んだら停止する
+    const animToken = ++this._animToken;
     const ctx = canvas.getContext('2d');
     const rect = canvas.parentElement.getBoundingClientRect();
-    canvas.width = rect.width;
-    canvas.height = rect.height;
-    const W = canvas.width, H = canvas.height;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
+    ctx.scale(dpr, dpr);
+    const W = rect.width, H = rect.height;
     const P = G.PHYSICS, R = P.R_EARTH, MU = P.MU;
     // Rocket size based on stage count (proportion to 85-unit mast: 50%/70%/90%)
-    const sc_ = simResult.stageCount;
-    // L/D ≈ 10 proportions (realistic rocket slenderness)
-    const rH2 = [0, 70, 110, 140][sc_];
-    const rW2 = [0, 3.5, 5, 6][sc_];
+    const sc_ = Math.min(G.MAX_STAGES, simResult.stageCount);
+    // Per-stage part arrays for data-driven rendering
+    const _stageTanks = [], _stageEngines = [];
+    for (let i = 0; i < sc_; i++) {
+      _stageTanks.push(rocketParts.stages[i].tank);
+      _stageEngines.push(rocketParts.stages[i].engine);
+    }
+    const _totalCap = _stageTanks.reduce((s, t) => s + (t.propellantCapacity || 2200), 0);
+    const _baseCap = 2200 * sc_;
+    const _capScale = Math.pow(_totalCap / _baseCap, 0.35);
+    const rH2 = Math.round([0, 70, 110, 140][sc_] * _capScale);
+    const _maxTankCap = Math.max(..._stageTanks.map(t => t.propellantCapacity || 2200));
+    const _widthScale = Math.pow(_maxTankCap / 2200, 0.15);
+    const rW2 = [0, 3.5, 5, 6][sc_] * _widthScale;
 
     const data = simResult.flightData;
-    if (!data.length) { this._showResults(simResult, rocketParts, site, targetAlt, targetInc); return; }
+    // アニメーション終了 → 結果画面。トークンが進んでいたら（別画面へ遷移済み）何もしない
+    const finish = (delay) => {
+      if (this.launchAnimFrame) { cancelAnimationFrame(this.launchAnimFrame); this.launchAnimFrame = null; }
+      setTimeout(() => {
+        if (animToken === this._animToken) this._showResults(simResult, rocketParts, site, targetAlt, targetInc);
+      }, delay);
+    };
+    if (!data.length) { finish(0); return; }
+    // Ensure flight data starts at ground level (t=0, alt=0)
+    if (data[0].t > 0 || data[0].alt > 0.5) {
+      const d0 = data[0];
+      data.unshift({ t: 0, alt: 0, vr: 0, vt: 0, v: 0, q: 0, accel: 0, fpa: 90, bodyAngle: 90,
+        mass: d0.mass, fuel: d0.fuel, downrange: 0, stage: d0.stage, burning: d0.burning });
+    }
 
     const maxSimTime = data[data.length - 1].t;
     let lastFrameTime = null, simTimeCursor = 0;
-    let camX = 0, camY = 30, zoom = H / 500, targetZoom = zoom, userZoom = false;
+    const initialZoom = H / 500;
+    let camX = 0, camY = 30, zoom = initialZoom, targetZoom = zoom, userZoom = false;
+    const PAD_BASE_SCALE = 1.2; // pad structure scale at initial zoom (world-fixed size)
     const debris = [], trail = [];
     let prevStage = 0, fairingSepDone = false, payloadSepDone = false, statusLock = 0;
-    let explosionParticles = [], explosionStart = 0, explosionCenter = null;
+    let explosionParticles = [], explosionStart = 0, explosionCenter = null, cmdDestructStart = 0;
     const statusEl = document.getElementById('launch-status');
     const speedSlider = document.getElementById('speed-slider');
     const speedControl = document.getElementById('speed-control');
@@ -184,8 +210,6 @@ G.App = {
     const stars = Array.from({ length: 200 }, () => ({ x: Math.random(), y: Math.random(), s: Math.random() * 2 + 0.5 }));
 
     let phase = 'pad';
-    let ignitionStart = 0;
-    const IGNITION_DURATION = 2.5;
     if (speedControl) speedControl.style.display = 'none';
 
     const toWorld = (dr, alt) => {
@@ -286,15 +310,18 @@ G.App = {
     if (liftoffBtn) {
       liftoffBtn.onclick = () => {
         liftoffBtn.style.display = 'none';
-        phase = 'ignition';
-        ignitionStart = performance.now();
+        phase = 'flight';
+        simTimeCursor = 0;
         lastFrameTime = null;
-        setStatus('メインエンジン点火！', 3000);
+        // Don't change targetZoom here — altitude-based zoom below handles smooth transition
+        if (speedControl) speedControl.style.display = '';
+        setStatus('リフトオフ！', 2500);
       };
     }
 
     // === Unified animation loop ===
     const mainLoop = (now) => {
+      if (animToken !== this._animToken) return; // 画面遷移済み — このループは終了
       if (!lastFrameTime) lastFrameTime = now;
       const dtR = Math.min(0.1, (now - lastFrameTime) / 1000);
       lastFrameTime = now;
@@ -308,21 +335,28 @@ G.App = {
         rw = toWorld(0, 0);
         fpaRad = Math.PI / 2;
         bodyRad = Math.PI / 2;
-      } else if (phase === 'ignition') {
-        const elapsed = (now - ignitionStart) / 1000;
-        flameFactor = Math.min(1, elapsed / 1.0);
-        d = { t:0, alt:0, vr:0, vt:0, v:0, q:0, accel:0, fpa:90, bodyAngle:90, mass:data[0].mass, fuel:data[0].fuel, downrange:0, stage:0, burning:flameFactor>0.3 };
-        rw = toWorld(0, 0);
-        fpaRad = Math.PI / 2;
-        bodyRad = Math.PI / 2;
-        if (elapsed >= IGNITION_DURATION) {
-          phase = 'flight';
-          if (!userZoom) targetZoom = H / 3000;
-          if (speedControl) speedControl.style.display = '';
-          setStatus('リフトオフ！', 2500);
-          lastFrameTime = null;
-          this.launchAnimFrame = requestAnimationFrame(mainLoop);
-          return;
+      } else if (phase === 'cmd_destruct') {
+        // Command destruct sequence: show failure reason → "指令破壊します！" → 1s → explosion
+        d = data[data.length - 1];
+        rw = toWorld(d.downrange, d.alt);
+        fpaRad = (d.fpa != null ? d.fpa : 90) * Math.PI / 180;
+        bodyRad = (d.bodyAngle != null ? d.bodyAngle : (d.fpa != null ? d.fpa : 90)) * Math.PI / 180;
+        flameFactor = 0;
+        const elapsedCmd = (now - cmdDestructStart) / 1000;
+        if (elapsedCmd >= 1.5 && elapsedCmd < 2.5) {
+          setStatus('指令破壊します！', 5000);
+        }
+        if (elapsedCmd >= 2.5) {
+          // Trigger explosion
+          phase = 'explosion';
+          explosionStart = now;
+          explosionCenter = { x: rw.x, y: rw.y };
+          for (let ei = 0; ei < 30; ei++) {
+            const ang = Math.random() * Math.PI * 2;
+            const spd = 20 + Math.random() * 80;
+            explosionParticles.push({ x: rw.x, y: rw.y, dx: Math.cos(ang)*spd, dy: Math.sin(ang)*spd, r: 2+Math.random()*5, age: 0, col: ['#ff4400','#ff8800','#ffcc00','#ff6600','#aa2200'][Math.floor(Math.random()*5)] });
+          }
+          setStatus('指令破壊', 5000);
         }
       } else if (phase === 'explosion') {
         d = data[data.length - 1];
@@ -335,8 +369,7 @@ G.App = {
           ep.x += ep.dx * dtR; ep.y += (ep.dy - 50) * dtR; ep.age += dtR;
         }
         if (elapsedExp > 3) {
-          cancelAnimationFrame(this.launchAnimFrame);
-          setTimeout(() => this._showResults(simResult, rocketParts, site, targetAlt, targetInc), 500);
+          finish(500);
           return;
         }
       } else {
@@ -347,11 +380,16 @@ G.App = {
         rw = toWorld(d.downrange, d.alt);
         fpaRad = (d.fpa != null ? d.fpa : 90) * Math.PI / 180;
         bodyRad = (d.bodyAngle != null ? d.bodyAngle : (d.fpa != null ? d.fpa : 90)) * Math.PI / 180;
-        flameFactor = 1;
+        flameFactor = d.burning ? 1 : 0;
 
-        if (simTimeCursor >= maxSimTime) {
-          const isCrash = !simResult.success && d.alt < 5000;
-          if (isCrash) {
+        if (simTimeCursor >= maxSimTime && phase === 'flight') {
+          const fp = simResult.failPart;
+          const isExplosion = !simResult.success && (fp === 'engine' || fp === 'tank' || fp === 'obc' || d.alt < 5000);
+          const isCommandDestruct = !simResult.success && (fp === 'fairing' || fp === 'structure');
+          const isPayloadFail = !simResult.success && fp === 'payload';
+
+          if (isExplosion) {
+            // Engine/tank/OBC failure or crash → immediate explosion
             phase = 'explosion';
             explosionStart = now;
             explosionCenter = { x: rw.x, y: rw.y };
@@ -360,10 +398,20 @@ G.App = {
               const spd = 20 + Math.random() * 80;
               explosionParticles.push({ x: rw.x, y: rw.y, dx: Math.cos(ang)*spd, dy: Math.sin(ang)*spd, r: 2+Math.random()*5, age: 0, col: ['#ff4400','#ff8800','#ffcc00','#ff6600','#aa2200'][Math.floor(Math.random()*5)] });
             }
-            setStatus('墜落！', 5000);
+            setStatus(simResult.failReason || '墜落！', 5000);
+          } else if (isCommandDestruct) {
+            // Fairing/structure separation failure → show failure → command destruct → explosion
+            phase = 'cmd_destruct';
+            setStatus(simResult.failReason, 5000);
+            cmdDestructStart = now;
+          } else if (isPayloadFail) {
+            // Satellite separation failure → message → end (no explosion)
+            setStatus('衛星分離できません', 5000);
+            finish(2500);
+            return;
           } else {
-            cancelAnimationFrame(this.launchAnimFrame);
-            setTimeout(() => this._showResults(simResult, rocketParts, site, targetAlt, targetInc), 1200);
+            // Success or orbit failure (no crash) → results
+            finish(1200);
             return;
           }
         }
@@ -396,9 +444,11 @@ G.App = {
       }
 
       // --- Camera ---
+      // Always track rocket position (center on rocket)
       const camLerp = Math.min(0.15, 0.06 + speed * 0.005);
       camX += (rw.x - camX) * camLerp;
       camY += (rw.y - camY) * camLerp;
+      // No auto-zoom — keep pad-level zoom. User can zoom manually via wheel/pinch.
       zoom += (targetZoom - zoom) * 0.06;
 
       // --- Debris update ---
@@ -441,9 +491,9 @@ G.App = {
       }
       ctx.strokeStyle = '#4db8ff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(ecS.x, ecS.y, eRP, 0, Math.PI*2); ctx.stroke();
 
-      // Launch pad structures (at world 0,0)
+      // Launch pad structures (at world 0,0) — world-fixed size (scales with zoom)
       const padScr = toScr(0, 0);
-      const padScale = Math.min(1.2, zoom * 60);
+      const padScale = PAD_BASE_SCALE * (zoom / initialZoom);
       const rocketH = rH2 * 5/6; // visible rocket height (nose to bottom)
       const armH = rocketH * 0.55 * padScale; // arm at ~55% of rocket height
       if (padScr.y > -100 && padScr.y < H+100) {
@@ -471,112 +521,47 @@ G.App = {
       // Rocket (hidden during explosion)
       const rp = toScr(rw.x, rw.y);
       if (phase !== 'explosion') {
-        const isPad = (phase === 'pad' || phase === 'ignition');
-        // Smooth pad→flight transition (3s ease-out) — fixes position jump
-        let rScale, rYOff;
-        if (isPad) {
-          rScale = padScale;
-          rYOff = rH2 / 3 * rScale;
-        } else {
-          const tFrac = Math.min(1, simTimeCursor / 3);
-          const eased = tFrac * (2 - tFrac);
-          rScale = padScale + (1 - padScale) * eased;
-          rYOff = (rH2 / 3 * padScale) * (1 - eased);
-        }
-
-        // Remaining stages and dynamic rocket height
+        // Remaining stages and dynamic rocket height (compute FIRST for rYOff)
         const nRem = sc_ - d.stage;
-        const stageFracs = [];
-        let fTot = 0;
-        for (let si = 0; si < sc_; si++) { const w = 1 + (sc_ - 1 - si) * 0.6; stageFracs.push(w); fTot += w; }
-        let remainFrac = 0;
-        for (let si = d.stage; si < sc_; si++) remainFrac += stageFracs[si] / fTot;
+        let _remCap = 0;
+        for (let si = d.stage; si < sc_; si++) _remCap += _stageTanks[si].propellantCapacity || 2200;
+        const remainFrac = _totalCap > 0 ? _remCap / _totalCap : 1;
         const drawH = rH2 * (0.30 + 0.70 * remainFrac);
         const drawW = rW2;
 
-        // Component heights
-        const fairingH = drawH * 0.20;
-        const nozzleH = drawH * 0.07;
-        const interH = nRem > 1 ? drawH * 0.04 : 0;
-        const bodyZone = drawH - fairingH - nozzleH - Math.max(0, nRem - 1) * interH;
-        const stgH = [];
-        let swTot = 0;
-        for (let si = 0; si < nRem; si++) { const w = 1 + (nRem - 1 - si) * 0.6; stgH.push(w); swTot += w; }
-        for (let si = 0; si < nRem; si++) stgH[si] = bodyZone * stgH[si] / swTot;
+        // Altitude-based scale/offset transition
+        // - At alt=0 (on pad): padScale, bottom-anchored (nozzle at ground)
+        // - At alt≥200m: rScale=1, centered at world position
+        // - Smooth ease-out based on altitude, not time
+        const transAlt = 200;
+        const altFrac = Math.min(1, Math.max(0, d.alt) / transAlt);
+        const eased = altFrac * (2 - altFrac);
+        let rScale = padScale + (1 - padScale) * eased;
+        // Cap rocket scale — prevent it from appearing too large when zoomed out
+        // sqrt for gentle falloff; min 0.4 keeps rocket visible
+        const maxRocketScale = Math.max(0.4, Math.sqrt(zoom / initialZoom) * 1.2);
+        rScale = Math.min(rScale, maxRocketScale);
+        // drawH/2 = offset to place nozzle at ground; eases to 0 (centered) in flight
+        const rYOff = drawH / 2 * rScale * (1 - eased);
 
         ctx.save();
         ctx.translate(rp.x, rp.y - rYOff);
         ctx.rotate(Math.PI / 2 - bodyRad);
         ctx.scale(rScale, rScale);
 
-        let yC = -drawH / 2;
-
-        // === Fairing (ogive) ===
-        if (!fairingSepDone) {
-          ctx.fillStyle = '#ccc';
-          ctx.beginPath();
-          ctx.moveTo(0, yC);
-          ctx.bezierCurveTo(-drawW * 0.15, yC + fairingH * 0.25, -drawW * 0.7, yC + fairingH * 0.55, -drawW, yC + fairingH);
-          ctx.lineTo(drawW, yC + fairingH);
-          ctx.bezierCurveTo(drawW * 0.7, yC + fairingH * 0.55, drawW * 0.15, yC + fairingH * 0.25, 0, yC);
-          ctx.fill();
-          // Seam line
-          ctx.strokeStyle = '#999'; ctx.lineWidth = 0.4;
-          ctx.beginPath(); ctx.moveTo(0, yC); ctx.lineTo(0, yC + fairingH); ctx.stroke();
-        } else {
-          // Satellite with solar panels
-          const sy = yC + fairingH * 0.5;
-          ctx.fillStyle = '#e8d44d'; ctx.fillRect(-drawW * 0.35, sy - 2.5, drawW * 0.7, 5);
-          ctx.fillStyle = '#2255cc';
-          ctx.fillRect(-drawW * 1.6, sy - 1.8, drawW * 0.9, 3.6);
-          ctx.fillRect(drawW * 0.7, sy - 1.8, drawW * 0.9, 3.6);
-          ctx.strokeStyle = '#888'; ctx.lineWidth = 0.4;
-          ctx.beginPath();
-          ctx.moveTo(-drawW * 0.35, sy); ctx.lineTo(-drawW * 1.6, sy);
-          ctx.moveTo(drawW * 0.35, sy); ctx.lineTo(drawW * 1.6, sy);
-          ctx.stroke();
+        // === Draw pre-rendered SVG rocket ===
+        const _compKey = `stg${d.stage}_fair${fairingSepDone ? 0 : 1}`;
+        const _comp = _rocketImgs[_compKey];
+        if (_comp && _comp.img.complete) {
+          const fitH = drawH;
+          const fitW = fitH * _comp.width / _comp.height;
+          ctx.drawImage(_comp.img, -fitW / 2, -drawH / 2, fitW, fitH);
         }
-        yC += fairingH;
-
-        // === Stage bodies (top stage first → bottom stage last) ===
-        for (let si = nRem - 1; si >= 0; si--) {
-          const h = stgH[si];
-          const wMult = 1.0 + (nRem - 1 - si) * 0.02;
-          const sw = drawW * wMult;
-          // Metallic gradient
-          const baseC = si === nRem - 1 ? 210 : 195;
-          const bg = ctx.createLinearGradient(-sw, 0, sw, 0);
-          bg.addColorStop(0, `rgb(${baseC-35},${baseC-35},${baseC-35})`);
-          bg.addColorStop(0.3, `rgb(${baseC},${baseC},${baseC})`);
-          bg.addColorStop(0.5, `rgb(${baseC+15},${baseC+15},${baseC+15})`);
-          bg.addColorStop(0.7, `rgb(${baseC},${baseC},${baseC})`);
-          bg.addColorStop(1, `rgb(${baseC-35},${baseC-35},${baseC-35})`);
-          ctx.fillStyle = bg;
-          ctx.fillRect(-sw, yC, sw * 2, h);
-          ctx.strokeStyle = '#777'; ctx.lineWidth = 0.4;
-          ctx.strokeRect(-sw, yC, sw * 2, h);
-          yC += h;
-          // Interstage joint
-          if (si > 0) {
-            const jw = drawW * 1.06;
-            ctx.fillStyle = '#666'; ctx.fillRect(-jw, yC, jw * 2, interH);
-            ctx.strokeStyle = '#555'; ctx.lineWidth = 0.4;
-            ctx.strokeRect(-jw, yC, jw * 2, interH);
-            yC += interH;
-          }
-        }
-
-        // === Engine nozzle ===
-        const ntW = drawW * 0.45, nbW = drawW * 0.65;
-        ctx.fillStyle = '#555';
-        ctx.beginPath();
-        ctx.moveTo(-ntW, yC); ctx.lineTo(-nbW, yC + nozzleH);
-        ctx.lineTo(nbW, yC + nozzleH); ctx.lineTo(ntW, yC);
-        ctx.closePath(); ctx.fill();
-        ctx.strokeStyle = '#444'; ctx.lineWidth = 0.4;
-        ctx.beginPath(); ctx.moveTo(-ntW, yC); ctx.lineTo(-nbW, yC + nozzleH);
-        ctx.moveTo(ntW, yC); ctx.lineTo(nbW, yC + nozzleH); ctx.stroke();
-        yC += nozzleH;
+        const _btmEng = _stageEngines[d.stage];
+        const _thrust = _btmEng ? (_btmEng.vacuumThrust || 55) : 55;
+        const _thrScale = Math.pow(_thrust / 55, 0.25);
+        const nbW = drawW * 0.75 * _thrScale;
+        let yC = drawH / 2;
 
         // === Exhaust flame ===
         if (d.burning && flameFactor > 0) {
@@ -623,13 +608,14 @@ G.App = {
         ctx.globalAlpha = 1;
       }
 
-      // Exhaust smoke (ignition phase)
-      if (phase === 'ignition' && flameFactor > 0.3) {
-        for (let i = 0; i < 4; i++) {
+      // Exhaust smoke (early ascent near pad)
+      if (phase === 'flight' && d.burning && d.alt < 500) {
+        const smokeFrac = Math.max(0, 1 - d.alt / 500);
+        for (let i = 0; i < Math.round(4 * smokeFrac); i++) {
           const smX = padScr.x + (Math.random()-0.5)*50*padScale;
           const smY = padScr.y + Math.random()*15*padScale;
-          const smR = (4+Math.random()*8) * flameFactor * padScale;
-          ctx.fillStyle = `rgba(200,200,200,${0.08+Math.random()*0.1})`;
+          const smR = (4+Math.random()*8) * padScale;
+          ctx.fillStyle = `rgba(200,200,200,${(0.08+Math.random()*0.1)*smokeFrac})`;
           ctx.beginPath(); ctx.arc(smX, smY, smR, 0, Math.PI*2); ctx.fill();
         }
       }
@@ -667,8 +653,82 @@ G.App = {
       this.launchAnimFrame = requestAnimationFrame(mainLoop);
     };
 
+    // Pre-build SVG composite images, then start animation
+    const _rocketImgs = {};
+    this._buildRocketComposites(rocketParts, sc_, _rocketImgs);
     setStatus('打ち上げ準備完了');
     this.launchAnimFrame = requestAnimationFrame(mainLoop);
+  },
+
+  _buildRocketComposites(rocketParts, stageCount, out) {
+    const CS = 28;
+    for (let fromStage = 0; fromStage < stageCount; fromStage++) {
+      for (const fairOn of [true, false]) {
+        const key = `stg${fromStage}_fair${fairOn ? 1 : 0}`;
+        const parts = [];
+        if (fairOn) parts.push({ cat: 'fairing', part: rocketParts.fairing });
+        parts.push({ cat: 'payload', part: rocketParts.payload });
+        if (rocketParts.obc) parts.push({ cat: 'obc', part: rocketParts.obc });
+        for (let i = stageCount - 1; i >= fromStage; i--) {
+          parts.push({ cat: 'tank', part: rocketParts.stages[i].tank });
+          parts.push({ cat: 'engine', part: rocketParts.stages[i].engine });
+          if (i > fromStage && rocketParts.structures && rocketParts.structures[i - 1])
+            parts.push({ cat: 'structure', part: rocketParts.structures[i - 1] });
+        }
+        const items = parts.map((p, idx) => {
+          const g = G.PART_GRID[p.cat];
+          let renderH = g.h;
+          if (p.cat === 'tank') {
+            renderH = Math.max(g.h, Math.min(8, Math.round(3 * Math.pow((p.part.propellantCapacity || 2200) / 2200, 0.8))));
+          }
+          if (p.cat === 'fairing') {
+            let ext = 0;
+            for (let j = idx + 1; j < parts.length; j++) {
+              if (parts[j].cat === 'payload' || parts[j].cat === 'obc') ext += G.PART_GRID[parts[j].cat].h;
+              else break;
+            }
+            if (ext > 0) renderH = g.h + ext;
+          }
+          const above = idx > 0 ? parts[idx - 1].cat : null;
+          const below = idx < parts.length - 1 ? parts[idx + 1].cat : null;
+          return { ...p, renderH, adj: { above, below }, g };
+        });
+        let flowY = 0;
+        for (const it of items) {
+          it.h = it.renderH * CS; it.w = it.g.w * CS;
+          if (it.cat === 'fairing') { it.y = flowY; flowY += it.g.h * CS; }
+          else if (it.cat === 'structure') { it.y = flowY - 24; flowY = it.y + it.h; }
+          else { it.y = flowY; flowY += it.h; }
+        }
+        const totalH = flowY, maxW = G.PART_GRID.tank.w * CS;
+        const ordered = items.map((item, idx) => ({ item, idx,
+          z: item.cat === 'fairing' ? 10 : item.cat === 'structure' ? 5 :
+             (item.cat === 'payload' || item.cat === 'obc') ? -1 : 0
+        })).sort((a, b) => a.z - b.z);
+        let svgInner = '';
+        for (const { item, idx } of ordered) {
+          const pid = `${key}_${idx}`, rc = G.RARITY[item.part.rarity].color;
+          let svg;
+          if (item.cat === 'tank') svg = G.Garage._svgTank(pid, rc, item.part, item.adj, item.renderH);
+          else if (item.cat === 'fairing') svg = G.Garage._svgFairing(pid, rc, item.part, item.adj, item.renderH);
+          else if (item.cat === 'structure') {
+            let tT = null, bT = null;
+            for (let j = idx - 1; j >= 0; j--) { if (items[j].cat === 'tank') { tT = items[j].part; break; } }
+            for (let j = idx + 1; j < items.length; j++) { if (items[j].cat === 'tank') { bT = items[j].part; break; } }
+            svg = G.Garage._svgStructure(pid, rc, item.part, item.adj, G.Garage._tankBw(tT), G.Garage._tankBw(bT));
+          } else svg = G.Garage._partSVG(item.cat, pid, rc, item.part, item.adj);
+          const xOff = (maxW - item.w) / 2;
+          svgInner += `<svg x="${xOff}" y="${item.y}" width="${item.w}" height="${item.h}" overflow="visible">${svg}</svg>`;
+        }
+        const svgStr = `<svg xmlns="http://www.w3.org/2000/svg" width="${maxW}" height="${totalH}">${svgInner}</svg>`;
+        const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => { URL.revokeObjectURL(url); out[key] = { img, width: maxW, height: totalH }; };
+        img.onerror = () => URL.revokeObjectURL(url);
+        img.src = url;
+      }
+    }
   },
 
   _showResults(simResult, rocketParts, site, targetAlt, targetInc) {
